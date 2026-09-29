@@ -16,6 +16,10 @@ extends Node3D
 const MAP_HALF := 74.0
 
 var _rng := RandomNumberGenerator.new()
+# Visual-only RNG: seeded from the world seed but independent, so purely
+# cosmetic detail (road wear, broken windows, clutter) can never shift the
+# shared _rng sequence that determines gameplay layouts.
+var _vrng := RandomNumberGenerator.new()
 var _time := 0.0
 var world_seed := -1 # the seed this neighborhood was built from (-1 = unbuilt)
 
@@ -93,6 +97,20 @@ var _m_silhouette: StandardMaterial3D # unshaded dark: distant skyline/treeline
 var _m_curb: StandardMaterial3D
 var _m_canopy_edge: StandardMaterial3D
 var _m_inner: StandardMaterial3D
+var _m_crack: StandardMaterial3D
+var _m_mailbox: StandardMaterial3D
+var _m_mailbox_flag: StandardMaterial3D
+var _m_ac: StandardMaterial3D
+var _m_ac_dark: StandardMaterial3D
+var _m_pothole: StandardMaterial3D
+var _m_oil: StandardMaterial3D
+var _m_leafpile: StandardMaterial3D
+var _m_picture: StandardMaterial3D
+var _m_curtain: StandardMaterial3D
+var _m_counter: StandardMaterial3D
+var _m_bed: StandardMaterial3D
+var _m_bedding: StandardMaterial3D
+var _m_rust_patch: StandardMaterial3D
 
 
 func _ready() -> void:
@@ -109,11 +127,13 @@ func build_world(seed: int) -> void:
 	_clear_world()
 	world_seed = seed
 	_rng.seed = seed
+	_vrng.seed = seed ^ 0x9E3779B9
 	_layout_roads()
 	_layout_gas_station()
 	_layout_house_lots() # lots first: grass/debris/scatter can reject them
 	_build_ground()
 	_build_roads()
+	_build_road_detail()
 	_build_houses()
 	_build_streetlights()
 	_build_trees()
@@ -201,15 +221,18 @@ func _lot_free(rect: Rect2) -> bool:
 	return true
 
 
-func _curb_spot() -> Vector3:
+func _curb_spot(visual: bool = false) -> Vector3:
 	# Random point just off a road edge (trash bags, hydrants).
-	if _rng.randf() < 0.5:
-		var s := 1.0 if _rng.randf() < 0.5 else -1.0
-		return Vector3(_rng.randf_range(-64, 64), 0,
-			road_ew_z + s * _rng.randf_range(6.3, 7.3))
-	var s2 := 1.0 if _rng.randf() < 0.5 else -1.0
-	return Vector3(road_ns_x + s2 * _rng.randf_range(6.3, 7.3), 0,
-		_rng.randf_range(-64, 64))
+	# visual=true routes through the cosmetic RNG so purely decorative
+	# scatter never shifts the layout RNG sequence.
+	var r := _vrng if visual else _rng
+	if r.randf() < 0.5:
+		var s := 1.0 if r.randf() < 0.5 else -1.0
+		return Vector3(r.randf_range(-64, 64), 0,
+			road_ew_z + s * r.randf_range(6.3, 7.3))
+	var s2 := 1.0 if r.randf() < 0.5 else -1.0
+	return Vector3(road_ns_x + s2 * r.randf_range(6.3, 7.3), 0,
+		r.randf_range(-64, 64))
 
 
 func _open_spot(margin := 1.0) -> Vector3:
@@ -350,6 +373,20 @@ func _make_materials() -> void:
 	_m_curb = _std(Color(0.50, 0.50, 0.50), 0.95)
 	_m_canopy_edge = _std(Color(0.62, 0.16, 0.12), 0.8)
 	_m_inner = _std(Color(0.40, 0.36, 0.30), 0.95) # interior wall paint
+	_m_crack = _std(Color(0.75, 0.78, 0.80), 0.4) # pale shattered-glass lines
+	_m_mailbox = _std(Color(0.25, 0.30, 0.38), 0.7, 0.3) # dusty blue mailbox
+	_m_mailbox_flag = _std(Color(0.65, 0.16, 0.12), 0.7) # red flag
+	_m_ac = _std(Color(0.55, 0.56, 0.55), 0.6, 0.4) # AC condenser
+	_m_ac_dark = _std(Color(0.20, 0.20, 0.21), 0.7) # grille, lid
+	_m_pothole = _std(Color(0.07, 0.07, 0.08), 1.0) # broken asphalt
+	_m_oil = _std(Color(0.05, 0.05, 0.07), 0.35, 0.4) # oil stain, slight sheen
+	_m_leafpile = _std(Color(0.42, 0.28, 0.12), 1.0) # dead leaves
+	_m_picture = _std(Color(0.30, 0.24, 0.16), 0.8) # framed pictures
+	_m_curtain = _std(Color(0.48, 0.38, 0.30), 0.95) # dusty curtains
+	_m_counter = _std(Color(0.55, 0.53, 0.48), 0.7) # kitchen counter
+	_m_bed = _std(Color(0.32, 0.24, 0.16), 0.85) # bed frame
+	_m_bedding = _std(Color(0.50, 0.46, 0.40), 0.95) # mattress + blanket
+	_m_rust_patch = _std(Color(0.36, 0.20, 0.10), 1.0) # rust patches
 
 	_m_headlight = StandardMaterial3D.new()
 	_m_headlight.albedo_color = Color(0.85, 0.82, 0.70)
@@ -648,6 +685,41 @@ func _build_roads() -> void:
 			_box(self, Vector3(0.18, 0.012, 1.6), Vector3(nx, 0.004, z), dm)
 
 
+func _build_road_detail() -> void:
+	# Seeded wear: potholes, oil stains on the asphalt; leaf piles drifted
+	# against curbs. Flat, cheap, purely visual (uses _vrng: never touches
+	# the layout RNG).
+	var ez := road_ew_z
+	var nx := road_ns_x
+	for _i in 8:
+		var on_ew := _vrng.randf() < 0.6
+		var px: float
+		var pz: float
+		if on_ew:
+			px = _vrng.randf_range(-66.0, 66.0)
+			pz = ez + _vrng.randf_range(-3.0, 3.0)
+		else:
+			px = nx + _vrng.randf_range(-3.0, 3.0)
+			pz = _vrng.randf_range(-66.0, 66.0)
+		if _vrng.randf() < 0.5:
+			# Pothole: dark sunken disc.
+			var r := _vrng.randf_range(0.35, 0.7)
+			_cyl(self, r, r, 0.018, Vector3(px, 0.008, pz), _m_pothole)
+		else:
+			# Oil stain: flat dark quad, slight sheen.
+			var s := _vrng.randf_range(0.8, 1.6)
+			_box(self, Vector3(s, 0.012, s * _vrng.randf_range(0.6, 1.0)),
+				Vector3(px, 0.006, pz), _m_oil, _vrng.randf() * TAU)
+	for _i in 6:
+		# Leaf piles against curbs and fences. Faceted: lumpy low-poly reads
+		# fine and saves ~100 verts per pile.
+		var lp := _curb_spot(true)
+		for _k in 2:
+			var r := _vrng.randf_range(0.16, 0.30)
+			_sphere(self, r, lp + Vector3(_vrng.randf_range(-0.5, 0.5), r * 0.4,
+				_vrng.randf_range(-0.5, 0.5)), _m_leafpile, true)
+
+
 func _house(pos: Vector3, face: float, w: float, d: float, wall: Color, roof_c: Color) -> void:
 	# QA pass: houses are enterable — four real walls (front wall has a door
 	# gap), a hinged door every house gets, a simple furnished interior, and
@@ -738,12 +810,34 @@ func _house(pos: Vector3, face: float, w: float, d: float, wall: Color, roof_c: 
 	_build_interior(root, w, d, face)
 	# Lawn patch grounding the house.
 	_box(root, Vector3(w + 5.0, 0.02, d + 5.0), Vector3(0, 0.005, 0), _m_lawn)
-	# Windows: framed, with sills; shutters on the front pair.
+	# Windows: framed, with sills; shutters on the front pair. About a
+	# quarter are smashed — the apocalypse shows. (Uses _vrng: cosmetic.)
 	var out_f := face * (d * 0.5 + t * 0.5 + 0.03)
-	_window(root, Vector3(-w * 0.28, 1.7, out_f), Vector3(0, 0, face), true)
-	_window(root, Vector3(w * 0.28, 1.7, out_f), Vector3(0, 0, face), true)
-	_window(root, Vector3(-w * 0.5 - t * 0.5 - 0.03, 1.7, 0.0), Vector3(-1, 0, 0), false)
-	_window(root, Vector3(w * 0.5 + t * 0.5 + 0.03, 1.7, 0.0), Vector3(1, 0, 0), false)
+	_window(root, Vector3(-w * 0.28, 1.7, out_f), Vector3(0, 0, face), true,
+		_vrng.randf() < 0.25)
+	_window(root, Vector3(w * 0.28, 1.7, out_f), Vector3(0, 0, face), true,
+		_vrng.randf() < 0.25)
+	_window(root, Vector3(-w * 0.5 - t * 0.5 - 0.03, 1.7, 0.0), Vector3(-1, 0, 0),
+		false, _vrng.randf() < 0.25)
+	_window(root, Vector3(w * 0.5 + t * 0.5 + 0.03, 1.7, 0.0), Vector3(1, 0, 0),
+		false, _vrng.randf() < 0.25)
+	# Porch posts flanking the door step.
+	for rx in [-1.45, 1.45]:
+		_box(root, Vector3(0.09, 0.85, 0.09), Vector3(rx, 0.42, fz + face * 1.15),
+			_m_trim)
+	# Mailbox on a post near the walk.
+	var mbx := w * 0.5 + 1.6
+	_box(root, Vector3(0.09, 1.05, 0.09), Vector3(mbx, 0.52, fz + face * 2.2),
+		_m_wood)
+	_box(root, Vector3(0.28, 0.22, 0.5), Vector3(mbx, 1.12, fz + face * 2.2),
+		_m_mailbox)
+	_box(root, Vector3(0.05, 0.18, 0.05), Vector3(mbx + 0.17, 1.28, fz + face * 2.2),
+		_m_mailbox_flag) # red flag up
+	# AC unit humming against the side wall.
+	var acx := w * 0.5 + 0.45
+	_box(root, Vector3(0.75, 0.65, 0.65), Vector3(acx, 0.33, 0.5), _m_ac)
+	_box(root, Vector3(0.5, 0.4, 0.03), Vector3(acx - 0.38, 0.33, 0.5),
+		_m_ac_dark) # fan grille
 	var door := {
 		"pivot": pivot, "blocker": blocker,
 		"pos": pos + Vector3(0, 0, fz), "open": false, "safehouse": false,
@@ -782,18 +876,16 @@ func _build_interior(root: Node3D, w: float, d: float, face: float) -> void:
 		_solid_box(root, Vector3(0.28, 0.85, 0.95), Vector3(cx + ax, 0.48, back), _m_couch)
 	_box(root, Vector3(0.82, 0.16, 0.8), Vector3(cx - 0.46, 0.66, back + face * 0.05), _m_cushion)
 	_box(root, Vector3(0.82, 0.16, 0.8), Vector3(cx + 0.46, 0.66, back + face * 0.05), _m_cushion)
-	# Coffee table with lower shelf.
+	# Coffee table with lower shelf; slab sides instead of four legs.
 	var tx := w * 0.18
 	var tz := back + face * 1.9
 	_box(root, Vector3(1.4, 0.1, 0.8), Vector3(tx, 0.62, tz), _m_table)
 	_box(root, Vector3(1.2, 0.06, 0.6), Vector3(tx, 0.22, tz), _m_shelf)
 	for sx in [-0.6, 0.6]:
-		for sz in [-0.32, 0.32]:
-			_box(root, Vector3(0.09, 0.57, 0.09), Vector3(tx + sx, 0.31, tz + sz), _m_table)
+		_box(root, Vector3(0.09, 0.57, 0.7), Vector3(tx + sx, 0.31, tz), _m_table)
 	_solid(root, Vector3(1.4, 0.65, 0.8), Vector3(tx, 0.33, tz))
 	# Rug: layered flat boxes in the middle of the room.
-	_box(root, Vector3(2.8, 0.035, 2.0), Vector3(0.9, 0.075, -face * 0.6), _m_rug_edge)
-	_box(root, Vector3(2.4, 0.035, 1.6), Vector3(0.9, 0.085, -face * 0.6), _m_rug)
+	_box(root, Vector3(2.8, 0.035, 2.0), Vector3(0.9, 0.08, -face * 0.6), _m_rug)
 	# Bookshelf on the right wall with book spines.
 	var shx := w * 0.5 - 0.65
 	_solid_box(root, Vector3(0.45, 2.0, 1.7), Vector3(shx, 1.0, 0.2), _m_shelf)
@@ -812,15 +904,44 @@ func _build_interior(root: Node3D, w: float, d: float, face: float) -> void:
 	# Floor lamp in the back-right corner; shade glows at night.
 	var lx := w * 0.5 - 1.2
 	var lz := -face * (d * 0.5 - 1.0)
-	_cyl(root, 0.05, 0.16, 0.08, Vector3(lx, 0.10, lz), _m_pole)
-	_cyl(root, 0.035, 0.035, 1.5, Vector3(lx, 0.85, lz), _m_pole)
+	_cyl(root, 0.035, 0.05, 1.6, Vector3(lx, 0.80, lz), _m_pole)
 	_cyl(root, 0.22, 0.30, 0.34, Vector3(lx, 1.75, lz), _window_lit_mat)
 	_solid(root, Vector3(0.35, 1.9, 0.35), Vector3(lx, 0.95, lz))
+	# Framed picture above the couch, on the back inner wall.
+	var pic_z := -face * (d * 0.5 - 0.30)
+	_box(root, Vector3(0.5, 0.62, 0.05), Vector3(cx, 2.05, pic_z), _m_picture)
+	# Dusty curtains on the front windows (inside), one per window.
+	var fz_in := face * (d * 0.5 - 0.30)
+	for wx in [-w * 0.28, w * 0.28]:
+		_box(root, Vector3(0.34, 1.5, 0.10),
+			Vector3(wx + 0.95, 1.65, fz_in), _m_curtain)
+	# Kitchen counter along the left wall.
+	var kx := -(w * 0.5 - 0.55)
+	_solid_box(root, Vector3(0.62, 0.90, 2.2), Vector3(kx, 0.45, 0.6), _m_counter)
+	_box(root, Vector3(0.66, 0.06, 2.26), Vector3(kx, 0.93, 0.6), _m_trim)
+	# Bed in the back-left corner: frame, mattress, pillow.
+	var bedx := -(w * 0.5 - 1.35)
+	var bedz := -face * (d * 0.5 - 1.75)
+	_solid_box(root, Vector3(1.7, 0.32, 1.15), Vector3(bedx, 0.22, bedz), _m_bed)
+	_box(root, Vector3(1.6, 0.18, 1.05), Vector3(bedx, 0.47, bedz), _m_bedding)
+	_box(root, Vector3(0.45, 0.12, 0.7), Vector3(bedx - 0.5, 0.60, bedz), _m_cushion)
 
 
-func _window(root: Node3D, center: Vector3, outward: Vector3, shutters: bool) -> void:
+func _window(root: Node3D, center: Vector3, outward: Vector3, shutters: bool,
+		broken := false) -> void:
 	# Framed window: trim frame behind the pane, sill below, shutters beside.
-	var mat: StandardMaterial3D = _window_lit_mat if _rng.randf() < 0.55 else _m_window_dark
+	# Broken variant: shattered pane (dark + pale crack lines + a missing
+	# shard showing the dark interior behind).
+	# NOTE: the lit-window roll always consumes one _rng draw (even when
+	# broken) so the layout RNG sequence matches the pre-HD-pass order.
+	var lit := _rng.randf() < 0.55
+	var mat: StandardMaterial3D
+	if broken:
+		mat = _m_window_dark
+	elif lit:
+		mat = _window_lit_mat
+	else:
+		mat = _m_window_dark
 	var along_x := absf(outward.z) > 0.5
 	var fw := Vector3(1.36, 1.46, 0.08) if along_x else Vector3(0.08, 1.46, 1.36)
 	var pw := Vector3(1.10, 1.20, 0.10) if along_x else Vector3(0.10, 1.20, 1.10)
@@ -833,6 +954,13 @@ func _window(root: Node3D, center: Vector3, outward: Vector3, shutters: bool) ->
 	_box(root, mw, center + outward * 0.02, _m_trim)
 	_box(root, mh, center + outward * 0.02, _m_trim)
 	_box(root, sw, center + Vector3(0, -0.76, 0) + outward * 0.08, _m_trim)
+	if broken:
+		# Jagged crack across the pane + one punched-out shard.
+		var c1 := Vector3(0.03, 0.55, 0.02) if along_x else Vector3(0.02, 0.55, 0.03)
+		var k1 := _box(root, c1, center + outward * 0.04, _m_crack)
+		k1.rotation.z = 0.5
+		_box(root, Vector3(0.30, 0.28, 0.02) if along_x else Vector3(0.02, 0.28, 0.30),
+			center + Vector3(-0.25, 0.28, 0) + outward * 0.01, _m_inner)
 	if shutters:
 		var off := Vector3(1.02, 0, 0) if along_x else Vector3(0, 0, 1.02)
 		var shw := Vector3(0.52, 1.34, 0.06) if along_x else Vector3(0.06, 1.34, 0.52)
@@ -1013,12 +1141,14 @@ func _tree(pos: Vector3, s: float) -> void:
 	root.position = pos
 	add_child(root)
 	_cyl(root, 0.13 * s, 0.22 * s, 1.9 * s, Vector3(0, 0.95 * s, 0), _m_bark) # tapered trunk
+	_cyl(root, 0.30 * s, 0.38 * s, 0.35 * s, Vector3(0, 0.16 * s, 0), _m_bark) # root flare
 	var pivot := Node3D.new()
 	pivot.position = Vector3(0, 2.5 * s, 0)
 	root.add_child(pivot)
 	_sphere(pivot, 1.35 * s, Vector3(0, 0.4 * s, 0), _m_leaf, true) # faceted canopy
 	_sphere(pivot, 1.00 * s, Vector3(0.9 * s, -0.1 * s, 0.4 * s), _m_leaf2, true)
 	_sphere(pivot, 0.95 * s, Vector3(-0.85 * s, 0.0, -0.35 * s), _m_leaf2, true)
+	_sphere(pivot, 0.70 * s, Vector3(0.1 * s, 1.15 * s, -0.2 * s), _m_leaf, true) # crown
 	_sway.append([pivot, _rng.randf() * TAU, 0.035])
 	_solid(root, Vector3(0.5, 2.2, 0.5), Vector3(0, 1.1, 0))
 
@@ -1048,10 +1178,15 @@ func _fence_run(center: Vector3, length: float) -> void:
 	root.position = center
 	add_child(root)
 	var n := int(length / 2.0)
+	var lean_i := _vrng.randi_range(0, n) if n > 0 else -1 # one tired post leans
 	for i in n + 1:
 		var px := -length * 0.5 + i * 2.0
-		_box(root, Vector3(0.14, 1.1, 0.14), Vector3(px, 0.55, 0), _m_wood)
-		_box(root, Vector3(0.2, 0.08, 0.2), Vector3(px, 1.12, 0), _m_wood) # post cap
+		var post := _box(root, Vector3(0.14, 1.1, 0.14), Vector3(px, 0.55, 0), _m_wood)
+		var cap := _box(root, Vector3(0.2, 0.08, 0.2), Vector3(px, 1.12, 0), _m_wood)
+		if i == lean_i:
+			post.rotation.z = 0.16
+			cap.position.x += 0.09
+			cap.rotation.z = 0.16
 	_box(root, Vector3(length, 0.09, 0.06), Vector3(0, 0.92, 0), _m_wood) # top cap rail
 	for h in [0.35, 0.68]:
 		_box(root, Vector3(length, 0.09, 0.06), Vector3(0, h, 0), _m_wood)
@@ -1239,12 +1374,24 @@ func _build_props() -> void:
 		_cyl(self, 0.30, 0.30, 0.9, p2 + Vector3(0, 0.45, 0), _m_barrel)
 		_cyl(self, 0.315, 0.315, 0.07, p2 + Vector3(0, 0.68, 0), _m_barrel_band)
 		_cyl(self, 0.315, 0.315, 0.07, p2 + Vector3(0, 0.24, 0), _m_barrel_band)
+		_cyl(self, 0.29, 0.29, 0.04, p2 + Vector3(0, 0.92, 0), _m_barrel_band) # lid
+		# Rust patches eating through the paint. (Cosmetic: _vrng.)
+		_box(self, Vector3(0.16, 0.20, 0.02), p2 + Vector3(0.22, 0.55, 0.20),
+			_m_rust_patch, _vrng.randf() * TAU)
+		_box(self, Vector3(0.12, 0.14, 0.02), p2 + Vector3(-0.18, 0.30, -0.22),
+			_m_rust_patch, _vrng.randf() * TAU)
 		_solid(self, Vector3(0.65, 0.95, 0.65), p2 + Vector3(0, 0.48, 0))
 	for _i in 2:
 		var p3 := _curb_spot()
 		var hm := _std(Color(0.55, 0.14, 0.10))
 		_cyl(self, 0.16, 0.18, 0.7, p3 + Vector3(0, 0.35, 0), hm)
 		_cyl(self, 0.20, 0.20, 0.12, p3 + Vector3(0, 0.72, 0), hm)
+		_cyl(self, 0.09, 0.09, 0.10, p3 + Vector3(0, 0.80, 0), hm) # top nut
+		# Side hose caps.
+		_box(self, Vector3(0.10, 0.14, 0.14), p3 + Vector3(0.18, 0.48, 0),
+			_m_barrel_band)
+		_box(self, Vector3(0.10, 0.14, 0.14), p3 + Vector3(-0.18, 0.48, 0),
+			_m_barrel_band)
 		_solid(self, Vector3(0.4, 0.8, 0.4), p3 + Vector3(0, 0.4, 0))
 	if not houses.is_empty():
 		var hh := houses[_rng.randi() % houses.size()] as Dictionary
@@ -1253,6 +1400,10 @@ func _build_props() -> void:
 			-float(hh["face"]) * (float(hh["d"]) * 0.5 + 2.0))
 		_box(self, Vector3(2.2, 1.3, 1.2), dp + Vector3(0, 0.65, 0), _std(Color(0.16, 0.28, 0.18)))
 		_box(self, Vector3(2.3, 0.12, 1.3), dp + Vector3(0, 1.35, 0), _m_trim)
+		# Split lid + a rust streak down the side.
+		_box(self, Vector3(2.14, 0.06, 1.28), dp + Vector3(0, 1.43, 0), _m_trim)
+		_box(self, Vector3(0.25, 0.8, 0.02), dp + Vector3(0.4, 0.7, 0.61),
+			_m_rust_patch)
 		_solid(self, Vector3(2.2, 1.3, 1.2), dp + Vector3(0, 0.65, 0))
 	for i in 3:
 		var cp := _gas_pos + Vector3(12.0 + (i % 2) * 1.1, 0.4, 8.0 + i * 0.4)

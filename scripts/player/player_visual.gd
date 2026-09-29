@@ -53,6 +53,9 @@ var _m_pack_dark: StandardMaterial3D
 var _m_eye: StandardMaterial3D
 var _m_mouth: StandardMaterial3D
 var _m_dark: StandardMaterial3D
+var _m_glove: StandardMaterial3D
+var _m_scuff: StandardMaterial3D
+var _m_lens: StandardMaterial3D
 
 
 func _ready() -> void:
@@ -67,6 +70,7 @@ func set_target_yaw(y: float) -> void:
 
 func set_flashlight(on: bool) -> void:
 	_flashlight.light_energy = 2.6 if on else 0.0
+	_m_lens.emission_energy_multiplier = 3.0 if on else 0.0
 
 
 func tick(delta: float, speed: float, moving: bool) -> void:
@@ -176,10 +180,11 @@ func _walk(delta: float, speed: float, k: float) -> void:
 	var elbow := 0.22 + 0.40 * intensity
 	_fore_l.rotation.x = -elbow - maxf(0.0, -s) * 0.25 * intensity
 	_fore_r.rotation.x = -elbow - maxf(0.0, s) * 0.25 * intensity
-	# Weight: double-frequency bob, forward lean, lateral sway.
+	# Weight: double-frequency bob, forward lean that deepens into a
+	# sprint crouch, lateral sway.
 	var bob := absf(c) * 0.055 * intensity
 	_body.position.y = bob
-	_body.rotation.x = -(0.05 + 0.13 * intensity)
+	_body.rotation.x = -(0.05 + 0.16 * intensity)
 	_body.rotation.z = s * 0.035 * intensity
 	# Head stays level: counter-bob, slight forward pitch at speed.
 	_head.position.y = _head_base_y - bob * 0.35
@@ -225,6 +230,14 @@ func _make_materials() -> void:
 	_m_eye = _mat(Color(0.05, 0.04, 0.03), 0.35) # dark inset eyes
 	_m_mouth = _mat(Color(0.40, 0.26, 0.20), 0.70)
 	_m_dark = _mat(Color(0.09, 0.09, 0.10), 0.70) # zipper, buckles, lamp
+	# HD upgrade pass: gloves, knee pads, scuffs, flashlight lens.
+	_m_glove = _mat(Color(0.16, 0.14, 0.11), 0.85) # worn work gloves
+	_m_scuff = _mat(Color(0.15, 0.15, 0.16), 0.95) # dirt/scuff patches
+	_m_lens = StandardMaterial3D.new() # flashlight lens, glows when lit
+	_m_lens.albedo_color = Color(0.9, 0.88, 0.80)
+	_m_lens.emission_enabled = true
+	_m_lens.emission = Color(1.0, 0.95, 0.80)
+	_m_lens.emission_energy_multiplier = 0.0
 
 
 func _mat(c: Color, rough := 0.85, rim := 0.0) -> StandardMaterial3D:
@@ -344,6 +357,9 @@ func _build_legs() -> void:
 		_frustum(shin, Vector2(0.15, 0.17), Vector2(0.105, 0.125), 0.36,
 			Vector3(0, -0.18, 0), _m_pants)
 		_box(shin, Vector3(0.125, 0.07, 0.145), Vector3(0, -0.335, 0), _m_pants_dark)
+		# Knee pad: hard shell + strap.
+		_box(shin, Vector3(0.13, 0.13, 0.05), Vector3(0, -0.13, -0.075), _m_dark)
+		_box(shin, Vector3(0.135, 0.03, 0.155), Vector3(0, -0.075, 0), _m_dark)
 		_box(shin, Vector3(0.14, 0.07, 0.30), Vector3(0, -0.545, -0.045), _m_sole)
 		_frustum(shin, Vector2(0.125, 0.14), Vector2(0.14, 0.155), 0.15,
 			Vector3(0, -0.435, -0.01), _m_boots)
@@ -397,6 +413,11 @@ func _build_torso() -> void:
 	_box(_body, Vector3(0.24, 0.035, 0.02), Vector3(0, 1.40, -0.148), _m_dark)
 	_frustum(_body, Vector2(0.24, 0.09), Vector2(0.27, 0.11), 0.10,
 		Vector3(0, 1.56, 0.14), _m_jacket)
+	# Wear and tear: scuff patches on the jacket shoulder and thigh.
+	_box(_body, Vector3(0.10, 0.07, 0.02), Vector3(-0.19, 1.52, -0.135),
+		_m_scuff, Vector3(0, 0, 0.2))
+	_box(_body, Vector3(0.07, 0.10, 0.02), Vector3(0.15, 1.28, -0.140),
+		_m_scuff, Vector3(0, 0, -0.15))
 
 
 func _build_arms() -> void:
@@ -414,7 +435,9 @@ func _build_arms() -> void:
 			Vector3(0, -0.13, 0), _m_jacket)
 		_box(fore, Vector3(0.115, 0.06, 0.13), Vector3(0, -0.27, 0), _m_jacket_dark)
 		_frustum(fore, Vector2(0.10, 0.105), Vector2(0.085, 0.095), 0.12,
-			Vector3(0, -0.35, -0.01), _m_skin) # hand
+			Vector3(0, -0.35, -0.01), _m_glove) # work glove
+		_box(fore, Vector3(0.10, 0.03, 0.10), Vector3(0, -0.30, -0.02),
+			_m_glove) # glove cuff
 		if side < 0.0:
 			_arm_l = arm
 			_fore_l = fore
@@ -471,6 +494,8 @@ func _build_flashlight() -> void:
 	lamp_body.rotation.x = PI * 0.5
 	lamp_body.material_override = _m_dark
 	lamp_mount.add_child(lamp_body)
+	# Glowing lens at the lamp's front face.
+	_box(lamp_mount, Vector3(0.07, 0.07, 0.02), Vector3(0, 0, -0.085), _m_lens)
 	_flashlight = SpotLight3D.new()
 	_flashlight.spot_range = 15.0
 	_flashlight.spot_angle = 34.0

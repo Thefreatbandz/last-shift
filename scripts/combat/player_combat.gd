@@ -196,6 +196,8 @@ func _apply_hit() -> void:
 			continue
 		var died: bool = z.take_damage(DAMAGE + _damage_bonus, _player.global_position)
 		_blood.burst(z.global_position + Vector3(0, 1.25, 0))
+		if died:
+			_blood.splat(z.global_position) # persistent ground splat
 		Sound.play_3d("thwack", z.global_position)
 		hit_any = true
 		killed_any = killed_any or died

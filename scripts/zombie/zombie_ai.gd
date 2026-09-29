@@ -130,15 +130,20 @@ func take_damage(amount: float, from_pos: Vector3) -> bool:
 
 func _die() -> void:
 	_dead = true
-	_dead_t = 1.1
+	_dead_t = 26.0 # HD pass: corpses persist a while, then sink away
 	Sound.play_3d("zombie_die", global_position)
 	$CollisionShape3D.disabled = true
+	visual.play_death() # fold into a crumple as the body falls
 
 
 func _physics_process(delta: float) -> void:
 	if _dead:
 		_dead_t -= delta
 		rotation.x = lerpf(rotation.x, -PI * 0.5, 1.0 - exp(-6.0 * delta))
+		visual.tick_dead(delta)
+		if _dead_t <= 1.5:
+			# Sink the corpse into the ground over its last 1.5s, then free.
+			position.y = -1.5 * (1.0 - _dead_t / 1.5)
 		if _dead_t <= 0.0:
 			queue_free()
 		return

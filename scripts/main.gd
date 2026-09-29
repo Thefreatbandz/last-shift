@@ -178,6 +178,12 @@ func _start_run(seed: int) -> void:
 
 	safehouse.set_panels(craft_panel, stash_panel)
 
+	# HD pass: ambient world life — sprint dust + wind-blown leaves.
+	var ambient := AmbientFX.new()
+	ambient.name = "AmbientFX"
+	add_child(ambient)
+	ambient.setup(player)
+
 	# Minimap: fog-of-war neighborhood map (corner widget + M/tap overlay).
 	var mmap := MinimapModel.new()
 	mmap.name = "Minimap"
