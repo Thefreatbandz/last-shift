@@ -14,6 +14,8 @@ const RECIPES := [
 		"desc": "Heals 60 HP.", "once": false},
 	{"id": "barricade", "name": "Board Barricade", "cost": {"scrap": 4, "cloth": 2},
 		"desc": "Fortify the safehouse: zombies keep their distance.", "once": true},
+	{"id": "lockpick", "name": "Lockpick", "cost": {"scrap": 2},
+		"desc": "Opens one locked door. Single use.", "once": false},
 ]
 
 var inventory: Inventory
@@ -72,6 +74,8 @@ func craft(id: String) -> bool:
 		"barricade":
 			safehouse.build_barricade()
 			_done[id] = true
+		"lockpick":
+			inventory.add("lockpick", 1)
 	Sound.play("craft") # workbench clank; main plays the success chime on `crafted`
 	crafted.emit(id)
 	return true

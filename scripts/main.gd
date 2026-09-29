@@ -96,7 +96,8 @@ func _start_run(seed: int) -> void:
 
 	var combat := player.get_node("Combat") as PlayerCombat
 	var health := player.get_node("Health") as PlayerHealth
-	zombies.setup(player, time_manager, noise, neighborhood.zombie_spawns)
+	zombies.setup(player, time_manager, noise, neighborhood.zombie_spawns,
+		neighborhood.brute_spawns, neighborhood.building_zombie_spawns)
 	health.setup(player, hud, zombies)
 
 	# Survival meters: stamina, hunger, thirst.
@@ -142,9 +143,13 @@ func _start_run(seed: int) -> void:
 	var doors := HouseDoors.new()
 	doors.name = "HouseDoors"
 	add_child(doors)
-	doors.setup(neighborhood, interact, player, safehouse)
+	doors.setup(neighborhood, interact, player, safehouse, inventory)
 
-	# QA pass: one searchable container inside every house.
+	# QA pass: one searchable container inside every house. The police
+	# station key hides in one non-safehouse house (seeded pick).
+	var key_idx := (seed * 7 + 3) % maxi(neighborhood.houses.size(), 1)
+	if key_idx == neighborhood.safehouse_index:
+		key_idx = (key_idx + 1) % neighborhood.houses.size()
 	for i in neighborhood.houses.size():
 		var h := neighborhood.houses[i] as Dictionary
 		var hp := h["pos"] as Vector3
@@ -152,7 +157,15 @@ func _start_run(seed: int) -> void:
 			float(h["face"]) * (float(h["d"]) * 0.5 - 1.2))
 		var table: Array = INDOOR_LOOT[2] if i == neighborhood.safehouse_index \
 			else INDOOR_LOOT[i % INDOOR_LOOT.size()]
+		if i == key_idx:
+			table = table.duplicate(true)
+			table.append(["police_key", 1])
 		loot.add_container(spot, table)
+
+	# Building types: seeded interior loot containers per building.
+	for bl in neighborhood.building_loot:
+		var bd := bl as Dictionary
+		loot.add_container(bd["pos"], bd["items"])
 
 	var crafting := Crafting.new()
 	crafting.name = "Crafting"

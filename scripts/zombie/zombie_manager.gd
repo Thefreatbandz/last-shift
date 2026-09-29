@@ -33,13 +33,30 @@ func set_ward(center: Vector3, radius: float) -> void:
 
 
 func setup(player: PlayerController, tm: TimeManager, noise: NoiseBus,
-		spawns: Array[Vector3]) -> void:
+		spawns: Array[Vector3], brutes: Array[Vector3] = [],
+		indoor: Array[Vector3] = []) -> void:
 	_player = player
 	_time_manager = tm
 	_noise = noise
 	_spawns = spawns
 	_noise.noise_emitted.connect(_on_noise)
 	_spawn_pack()
+	# Building types: Brutes only in designated high-risk interiors
+	# (police station), regular walkers in other interiors (hospital wards…).
+	for bp in brutes:
+		var bz := _spawn_at(bp)
+		bz.make_brute()
+	for ip in indoor:
+		_spawn_at(ip)
+
+
+func _spawn_at(pos: Vector3) -> ZombieAI:
+	var z := ZOMBIE_SCENE.instantiate() as ZombieAI
+	add_child(z)
+	z.global_position = pos
+	z.setup(_player, _time_manager)
+	zombies.append(z)
+	return z
 
 
 func _spawn_pack() -> void:

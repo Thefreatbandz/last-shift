@@ -42,6 +42,17 @@ var safehouse_door_pivot: Node3D
 # {pos, w, d, face, roof (Node3D), door: {pivot, blocker, pos, open, safehouse}}
 var houses: Array = []
 
+# Commercial buildings (BuildingTypes): entries are Dictionaries:
+# {pos, w, d, face, roof (Node3D), door: {pivot, blocker, pos, open,
+#  safehouse, locked}, kind, name}
+var buildings: Array = []
+var building_loot: Array = [] # dicts {pos: Vector3, items: Array}
+var brute_spawns: Array[Vector3] = [] # interior Brute spawn points
+var building_zombie_spawns: Array[Vector3] = [] # interior Walker spawn points
+var _building_specs: Array = [] # seeded commercial lots: {kind, pos, face, w, d, h}
+var _interior_parts: Array[String] = [] # seeded interior feature tags (for hash)
+var _bx_mats: Dictionary = {} # material lookup for BuildingTypes
+
 # Seeded-generation layout state (filled by build_world).
 var zombie_spawns: Array[Vector3] = [] # 6 scatter points for the zombie pack
 var safehouse_index := -1 # which house is the boarded safehouse
@@ -131,10 +142,12 @@ func build_world(seed: int) -> void:
 	_layout_roads()
 	_layout_gas_station()
 	_layout_house_lots() # lots first: grass/debris/scatter can reject them
+	_layout_building_lots() # commercial lots: same rejection guarantees
 	_build_ground()
 	_build_roads()
 	_build_road_detail()
 	_build_houses()
+	_build_commercial() # before trees/props so they reject building lots
 	_build_streetlights()
 	_build_trees()
 	_build_fences()
@@ -155,6 +168,13 @@ func _clear_world() -> void:
 	safehouse_boards.clear()
 	safehouse_door_pivot = null
 	zombie_spawns.clear()
+	buildings.clear()
+	building_loot.clear()
+	brute_spawns.clear()
+	building_zombie_spawns.clear()
+	_building_specs.clear()
+	_interior_parts.clear()
+	# NOTE: _bx_mats is NOT cleared here — materials are built once in _ready().
 	safehouse_index = -1
 	safehouse_door_pos = Vector3.ZERO
 	safehouse_porch = Vector3.ZERO
@@ -300,7 +320,129 @@ func layout_hash() -> String:
 	parts.append("porch:%.2f,%.2f" % [safehouse_porch.x, safehouse_porch.z])
 	for s in zombie_spawns:
 		parts.append("z:%.2f,%.2f" % [s.x, s.z])
+	parts.append("bld:%d" % buildings.size())
+	for b in buildings:
+		var bd := b as Dictionary
+		var bp := bd["pos"] as Vector3
+		parts.append("b:%s:%.2f,%.2f|f:%.1f" % [
+			String(bd["kind"]), bp.x, bp.z, float(bd["face"])])
+	for ip in _interior_parts:
+		parts.append("in:" + ip)
 	return "|".join(parts)
+
+
+## Hash of just the seeded interior variation (building kinds, room/prop
+## layouts, container and zombie spawn tags). Same seed => same hash;
+## different seeds => different interiors.
+func interior_hash() -> String:
+	var parts: Array[String] = []
+	for b in buildings:
+		parts.append(String((b as Dictionary)["kind"]))
+	parts.append("---")
+	for ip in _interior_parts:
+		parts.append(ip)
+	return str("|".join(parts).hash())
+
+
+# ------------------------------------------------- commercial buildings ---
+
+## Seeded commercial-lot placement. Runs right after _layout_house_lots so
+## grass, debris and scatter reject building lots exactly like house lots.
+func _layout_building_lots() -> void:
+	var bt := BuildingTypes.new()
+	_building_specs = bt.layout_lots(self, BuildingTypes.pick_kinds(_rng))
+
+
+## Builds the commercial buildings (after houses, before trees/props).
+func _build_commercial() -> void:
+	var bt := BuildingTypes.new()
+	bt.build(self, _building_specs)
+
+
+# --------------------------------- public build API for BuildingTypes ----
+# All commercial-building geometry flows through these so the seeded world
+# (and its hash) stays deterministic. RNG: bx_rng() = layout RNG,
+# bx_vrng() = cosmetic RNG.
+
+func bx_rng() -> RandomNumberGenerator:
+	return _rng
+
+
+func bx_vrng() -> RandomNumberGenerator:
+	return _vrng
+
+
+func bx_box(parent: Node3D, size: Vector3, pos: Vector3, mat: Material,
+		rot_y := 0.0) -> MeshInstance3D:
+	return _box(parent, size, pos, mat, rot_y)
+
+
+func bx_solid_box(parent: Node3D, size: Vector3, pos: Vector3,
+		mat: Material) -> StaticBody3D:
+	return _solid_box(parent, size, pos, mat)
+
+
+func bx_cyl(parent: Node3D, r_top: float, r_bot: float, h: float, pos: Vector3,
+		mat: Material) -> MeshInstance3D:
+	return _cyl(parent, r_top, r_bot, h, pos, mat)
+
+
+func bx_sphere(parent: Node3D, r: float, pos: Vector3, mat: Material,
+		facets := false) -> MeshInstance3D:
+	return _sphere(parent, r, pos, mat, facets)
+
+
+func bx_solid(parent: Node3D, size: Vector3, pos: Vector3) -> StaticBody3D:
+	return _solid(parent, size, pos)
+
+
+func bx_window(root: Node3D, center: Vector3, outward: Vector3,
+		shutters: bool, broken := false) -> void:
+	_window(root, center, outward, shutters, broken)
+
+
+func bx_std(c: Color, rough := 0.9, metallic := 0.0) -> StandardMaterial3D:
+	return _std(c, rough, metallic)
+
+
+func bx_mat(key: String) -> Material:
+	return _bx_mats.get(key)
+
+
+func bx_lot_free(rect: Rect2) -> bool:
+	return _lot_free(rect)
+
+
+func bx_on_road(p: Vector3, margin := 0.0) -> bool:
+	return _on_road(p, margin)
+
+
+func bx_point_in_lots(p: Vector3, margin := 0.0) -> bool:
+	return _point_in_lots(p, margin)
+
+
+func bx_add_lot(rect: Rect2) -> void:
+	_lot_rects.append(rect)
+
+
+func bx_register(entry: Dictionary) -> void:
+	buildings.append(entry)
+
+
+func bx_add_loot(pos: Vector3, items: Array) -> void:
+	building_loot.append({"pos": pos, "items": items})
+
+
+func bx_brute(pos: Vector3) -> void:
+	brute_spawns.append(pos)
+
+
+func bx_zombie(pos: Vector3) -> void:
+	building_zombie_spawns.append(pos)
+
+
+func bx_track_interior(tag: String) -> void:
+	_interior_parts.append(tag)
 
 
 func _process(delta: float) -> void:
@@ -416,6 +558,19 @@ func _make_materials() -> void:
 	_cone_mat.albedo_color = Color(1.0, 0.80, 0.50, 0.03)
 
 	_smoke_tex = _radial_texture(64)
+
+	# Material lookup for commercial buildings (BuildingTypes bx_mat()).
+	_bx_mats = {
+		"trim": _m_trim, "foundation": _m_foundation, "step": _m_step,
+		"floor": _m_floor, "inner": _m_inner, "door": _m_door,
+		"door_panel": _m_door_panel, "window_dark": _m_window_dark,
+		"glass": _m_glass, "pole": _m_pole, "wood": _m_wood,
+		"counter": _m_counter, "shelf": _m_shelf, "table": _m_table,
+		"couch": _m_couch, "barrel": _m_barrel, "trash": _m_trash,
+		"curb": _m_curb, "crack": _m_crack, "mailbox": _m_mailbox,
+		"curtain": _m_curtain, "picture": _m_picture, "bed": _m_bed,
+		"bedding": _m_bedding,
+	}
 
 
 # ------------------------------------------------------------------ helpers ---

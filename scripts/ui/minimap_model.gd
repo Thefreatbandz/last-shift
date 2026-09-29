@@ -123,6 +123,11 @@ func houses() -> Array:
 	return _hood.houses
 
 
+## Commercial buildings: {pos, w, d, face, roof, door, kind, name}.
+func buildings() -> Array:
+	return _hood.buildings
+
+
 func safehouse_index() -> int:
 	return _hood.safehouse_index
 

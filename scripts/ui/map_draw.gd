@@ -91,6 +91,27 @@ static func draw_world(canvas: CanvasItem, m: MinimapModel, center: Vector2,
 			canvas.draw_rect(hr, Color(0.42, 0.38, 0.33, 0.9))
 		i += 1
 
+	# --- Commercial buildings: distinct colors per kind + kind letter on
+	# the expanded map (explored only).
+	for b in m.buildings():
+		var bd := b as Dictionary
+		var bp := bd["pos"] as Vector3
+		if not m.is_revealed(bp.x, bp.z):
+			continue
+		var kind := String(bd["kind"])
+		var mp := center + Vector2(bp.x, bp.z) * px
+		var bs := Vector2(float(bd["w"]), float(bd["d"])) * px
+		var bcol := BuildingTypes.kind_color(kind)
+		bcol.a = 0.92
+		var br := Rect2(mp - bs * 0.5, bs)
+		canvas.draw_rect(br, bcol)
+		canvas.draw_rect(br, bcol.darkened(0.45), false, 1.5)
+		if px > 1.5:
+			var t := BuildingTypes.kind_letter(kind)
+			var tw := _get_font().get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x
+			canvas.draw_string(_get_font(), mp + Vector2(-tw * 0.5, 5), t,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0, 0, 0, 0.9))
+
 	# --- Loot containers: gold = unsearched, dim = searched (explored only).
 	for cp in m.containers_unsearched():
 		if m.is_revealed(cp.x, cp.y):
@@ -131,7 +152,7 @@ static func draw_expanded(canvas: Control, m: MinimapModel) -> void:
 	draw_north(canvas, Vector2(c.x, panel.position.y + 4.0))
 	canvas.draw_string(f, Vector2(30, 54), "NEIGHBORHOOD %d" % m.seed,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color(0.95, 0.78, 0.40))
-	# Legend under the panel.
+	# Legend under the panel (two rows: core, then building types).
 	var ly := panel.position.y + side + 30.0
 	var lx := (size.x - 460.0) * 0.5
 	var items := [
@@ -145,5 +166,18 @@ static func draw_expanded(canvas: Control, m: MinimapModel) -> void:
 		canvas.draw_string(f, Vector2(lx + 12, ly), it[1] as String,
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(1, 1, 1, 0.75))
 		lx += 120.0
+	var ly2 := ly + 22.0
+	var lx2 := (size.x - 460.0) * 0.5
+	var bitems := [
+		[BuildingTypes.kind_color("police"), "POLICE"],
+		[BuildingTypes.kind_color("hospital"), "HOSPITAL"],
+		[BuildingTypes.kind_color("grocery"), "STORES"],
+		[BuildingTypes.kind_color("office_tall"), "OFFICES"],
+	]
+	for it in bitems:
+		canvas.draw_circle(Vector2(lx2, ly2 - 4), 5.0, it[0] as Color)
+		canvas.draw_string(f, Vector2(lx2 + 12, ly2), it[1] as String,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(1, 1, 1, 0.75))
+		lx2 += 120.0
 	canvas.draw_string(f, Vector2(30, size.y - 30), "TAP OR M TO CLOSE",
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(1, 1, 1, 0.55))

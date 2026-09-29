@@ -94,6 +94,28 @@ func _ready() -> void:
 	_get_flash_mat()
 
 
+## Brute variant look: riot-gear remnant. Bulkier body, tactical vest,
+## shoulder pads, cracked riot helmet. Called by ZombieAI.make_brute().
+func set_brute() -> void:
+	_body.scale = Vector3(1.32, 1.10, 1.22)
+	var M := shared_mats()
+	var gear: Material = M["pants"] # dark charcoal
+	# Tactical vest over the torso.
+	_box(_body, Vector3(0.58, 0.52, 0.44), Vector3(0, 1.12, 0.02), gear)
+	_box(_body, Vector3(0.40, 0.30, 0.05), Vector3(0, 1.14, -0.20),
+		M["shirt_dark"]) # vest front plate
+	# Shoulder pads.
+	_box(_body, Vector3(0.24, 0.18, 0.32), Vector3(-0.38, 1.36, 0), gear)
+	_box(_body, Vector3(0.24, 0.18, 0.32), Vector3(0.38, 1.36, 0), gear)
+	# Cracked riot helmet.
+	_box(_head, Vector3(0.36, 0.22, 0.38), Vector3(0, 0.13, -0.01), gear)
+	_box(_head, Vector3(0.30, 0.10, 0.02), Vector3(0, 0.02, -0.19),
+		M["wound"]) # shattered visor
+	_meshes.clear()
+	_collect_meshes(self) # include the gear in the hit-flash pass
+	# NOTE: set_brute recollects; cleared first (called after _ready's pass).
+
+
 func set_target_yaw(y: float) -> void:
 	_target_yaw = y
 
@@ -141,6 +163,7 @@ func tick(delta: float, speed: float, moving: bool) -> void:
 func tick_dead(delta: float) -> void:
 	if _dead_t < 0.0:
 		return
+	_apply_twitch(delta, false) # finish any in-flight twitch, start none
 	_dead_t += delta
 	var t := clampf(_dead_t / DEAD_TIME, 0.0, 1.0)
 	var e := 1.0 - pow(1.0 - t, 3.0) # ease-out cubic
@@ -165,7 +188,7 @@ func _apply_flinch(delta: float) -> void:
 	var t := clampf(1.0 - _flinch_t / FLINCH_TIME, 0.0, 1.0)
 	var f := sin(t * PI)
 	_body.rotation.x -= f * 0.45 # torso rocks back
-	_body.position.z += f * 0.14 # shoved backward
+	_body.position.z = f * 0.14 # shoved backward; absolute so it relaxes to 0
 	_head.rotation.x -= f * 0.55 # head snaps back
 	_arm_l.rotation.x -= f * 0.9 # arms flail up
 	_arm_r.rotation.x -= f * 0.9
@@ -219,6 +242,7 @@ func _shamble(delta: float, speed: float) -> void:
 	_head.position.y = _head_base_y - absf(cos(_phase)) * 0.015
 	_head.rotation.z = sin(_phase * 0.5 + 0.7) * 0.20
 	_head.rotation.x = 0.18 + sin(_phase * 0.33) * 0.07
+	_apply_twitch(delta) # keep advancing: never freeze a twitch mid-flight
 
 
 func _idle_sway(delta: float) -> void:
@@ -234,10 +258,14 @@ func _idle_sway(delta: float) -> void:
 	_apply_twitch(delta)
 
 
-func _apply_twitch(delta: float) -> void:
+func _apply_twitch(delta: float, can_trigger := true) -> void:
 	# Additive overlay: every few seconds one random twitch fires.
+	# The twitch MUST advance in every animation state (not just idle):
+	# the offsets are differential and only net back to zero if the
+	# twitch runs to completion. A twitch frozen mid-flight by a state
+	# change used to leave the head permanently twisted.
 	_twitch_t -= delta
-	if _twitch_kind == 0 and _twitch_t <= 0.0:
+	if can_trigger and _twitch_kind == 0 and _twitch_t <= 0.0:
 		_twitch_kind = randi_range(1, 3)
 		_twitch_dur = randf_range(0.35, 0.65)
 		_twitch_el = 0.0
@@ -276,6 +304,7 @@ func _lunge(delta: float) -> void:
 	_head.rotation.x = 0.18 + up * 0.25
 	_leg_l.rotation.x = 0.3 * up
 	_leg_r.rotation.x = -0.25 * up
+	_apply_twitch(delta, false) # finish any in-flight twitch, start none
 
 
 func _box(parent: Node3D, size: Vector3, pos: Vector3, mat: Material,

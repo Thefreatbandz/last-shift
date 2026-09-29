@@ -110,6 +110,9 @@ func play_hurt_flinch() -> void:
 
 
 func _start_action(name: String, dur: float) -> void:
+	# A new action cancels the old one mid-envelope: reset the one-shot
+	# overlay channel no base pose rewrites, or it would stick forever.
+	_body.position.z = 0.0
 	_action = name
 	_action_t = 0.0
 	_action_dur = dur

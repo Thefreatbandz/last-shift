@@ -28,6 +28,14 @@ var state: int = State.WANDER
 var hp := MAX_HP
 var spawn_pos := Vector3.ZERO
 
+# Brute variant (building types: police station + other high-risk spots).
+# Base Walker constants above are NEVER touched — brutes only scale via
+# these multipliers, set by make_brute().
+var is_brute := false
+var max_hp := MAX_HP
+var spd_mult := 1.0
+var dmg_mult := 1.0
+
 var player: PlayerController
 var player_health: PlayerHealth
 var time_manager: TimeManager
@@ -78,8 +86,20 @@ func setup(p: PlayerController, tm: TimeManager) -> void:
 	player_health = p.get_node("Health") as PlayerHealth
 
 
+## Brute: a riot-gear remnant. ~2.2x HP, slightly faster, hits harder, and
+## visibly bulkier. Only spawned in designated high-risk interiors.
+func make_brute() -> void:
+	is_brute = true
+	max_hp = 220.0
+	hp = max_hp
+	spd_mult = 1.22
+	dmg_mult = 1.5
+	if is_instance_valid(visual):
+		visual.set_brute()
+
+
 func reset() -> void:
-	hp = MAX_HP
+	hp = max_hp
 	_dead = false
 	_dead_t = 0.0
 	state = State.WANDER
@@ -309,7 +329,7 @@ func _do_wander(delta: float) -> void:
 	if _to.length() < 1.0 or _wander_t <= 0.0:
 		_wander_target = global_position + Vector3(randf_range(-10, 10), 0, randf_range(-10, 10))
 		_wander_t = randf_range(4.0, 8.0)
-	_steer(_wander_target, lerpf(WANDER_DAY, WANDER_NIGHT, _night_f))
+	_steer(_wander_target, lerpf(WANDER_DAY, WANDER_NIGHT, _night_f) * spd_mult)
 
 
 func _do_suspicious(delta: float) -> void:
@@ -353,7 +373,7 @@ func _do_chase(delta: float) -> void:
 		state = State.ATTACK
 		return
 	_face(player.global_position)
-	_steer(player.global_position, lerpf(CHASE_DAY, CHASE_NIGHT, _night_f))
+	_steer(player.global_position, lerpf(CHASE_DAY, CHASE_NIGHT, _night_f) * spd_mult)
 
 
 func _do_attack(delta: float) -> void:
@@ -380,7 +400,7 @@ func _do_attack(delta: float) -> void:
 	if _attack_hit_t > 0.0:
 		_attack_hit_t -= delta
 		if _attack_hit_t <= 0.0 and dist < ATTACK_RANGE * 1.25:
-			player_health.damage(ATTACK_DAMAGE)
+			player_health.damage(ATTACK_DAMAGE * dmg_mult)
 
 
 func _do_lose(delta: float) -> void:
@@ -395,4 +415,4 @@ func _do_lose(delta: float) -> void:
 		state = State.WANDER
 		_wander_t = 0.0
 	else:
-		_steer(_last_known, lerpf(CHASE_DAY, CHASE_NIGHT, _night_f) * 0.8)
+		_steer(_last_known, lerpf(CHASE_DAY, CHASE_NIGHT, _night_f) * 0.8 * spd_mult)
