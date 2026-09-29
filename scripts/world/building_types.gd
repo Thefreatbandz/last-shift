@@ -14,6 +14,7 @@ const GROCERY := "grocery"
 const CORNER := "corner"
 const OFFICE_TALL := "office_tall"
 const OFFICE_SMALL := "office_small"
+const WAREHOUSE := "warehouse"
 
 const NAMES := {
 	"police": "Police Station",
@@ -22,6 +23,7 @@ const NAMES := {
 	"corner": "Corner Store",
 	"office_tall": "Office Tower",
 	"office_small": "Offices",
+	"warehouse": "Warehouse",
 }
 
 # kind -> Vector3(width, height, depth)
@@ -32,6 +34,7 @@ const DIMS := {
 	"corner": Vector3(8, 3.2, 7),
 	"office_tall": Vector3(12, 3.4, 12),
 	"office_small": Vector3(10, 3.4, 8),
+	"warehouse": Vector3(14, 5.0, 9),
 }
 
 # Cached tinted materials for shelf goods / small props (shared per build).
@@ -50,6 +53,8 @@ static func kind_color(kind: String) -> Color:
 			return Color(0.88, 0.70, 0.25)
 		"office_tall", "office_small":
 			return Color(0.55, 0.60, 0.72)
+		"warehouse":
+			return Color(0.72, 0.38, 0.18) # rust orange
 	return Color(0.6, 0.6, 0.6)
 
 
@@ -65,14 +70,18 @@ static func kind_letter(kind: String) -> String:
 			return "C"
 		"office_tall", "office_small":
 			return "O"
+		"warehouse":
+			return "W"
 	return "?"
 
 
 ## Which commercial kinds appear this run: police + hospital + grocery are
-## fixed anchors, the fourth slot rotates between corner store and offices.
+## fixed anchors, the fourth slot rotates between corner store and offices,
+## and the warehouse always rides along last (appended after the anchors so
+## their seeded placement draws never shift).
 static func pick_kinds(rng: RandomNumberGenerator) -> Array:
 	var fourth: String = [CORNER, OFFICE_TALL, OFFICE_SMALL][rng.randi() % 3]
-	return [POLICE, HOSPITAL, GROCERY, fourth]
+	return [POLICE, HOSPITAL, GROCERY, fourth, WAREHOUSE]
 
 
 ## Rejection-sample a free lot per kind. Returns spec dicts:
@@ -81,9 +90,14 @@ static func pick_kinds(rng: RandomNumberGenerator) -> Array:
 func layout_lots(hood: NeighborhoodBuilder, kinds: Array) -> Array:
 	var specs: Array = []
 	var rng := hood.bx_rng()
+	var vrng := hood.bx_vrng()
 	for kind in kinds:
 		var dim: Vector3 = DIMS[kind]
-		var spec := _place_lot(hood, rng, String(kind), dim)
+		# The warehouse is a purely additive 5th kind: it is placed from the
+		# cosmetic stream so its own placement draws never shift the layout
+		# stream that existing houses/roads/zombies are generated from.
+		var prng := vrng if String(kind) == WAREHOUSE else rng
+		var spec := _place_lot(hood, prng, String(kind), dim)
 		if not spec.is_empty():
 			specs.append(spec)
 	return specs
@@ -132,6 +146,8 @@ func build(hood: NeighborhoodBuilder, specs: Array) -> void:
 				entry = _build_office_tall(hood, spec)
 			OFFICE_SMALL:
 				entry = _build_office_small(hood, spec)
+			WAREHOUSE:
+				entry = _build_warehouse(hood, spec)
 		if not entry.is_empty():
 			hood.bx_register(entry)
 
@@ -711,4 +727,96 @@ func _build_office_small(hood: NeighborhoodBuilder, spec: Dictionary) -> Diction
 	hood.bx_add_loot(root.position + Vector3(1.6, 0.6, bd * 1.6),
 		[["cloth", 2], ["water", 1]])
 	hood.bx_track_interior("office_small|preset=%d" % preset)
+	return _entry(spec, roof_g, door)
+
+
+# ------------------------------------------------------------ warehouse
+
+func _build_warehouse(hood: NeighborhoodBuilder, spec: Dictionary) -> Dictionary:
+	# Kit-inspired rust-belt warehouse: corrugated metal walls, HEAVY rust
+	# banding eating the base, a shut ribbed rolling door, high barred
+	# windows, pallet + crate stacks inside. Purely additive 5th kind —
+	# appended after the anchors so their seeded draws never shift.
+	var rng := hood.bx_rng()
+	var vrng := hood.bx_vrng()
+	var root := _base(hood, spec)
+	var w: float = spec["w"]
+	var d: float = spec["d"]
+	var h: float = spec["h"]
+	var face: float = spec["face"]
+	var fd := face
+	var bd := -face
+	_walls(hood, root, face, w, d, h, 0.35,
+		hood.bx_std(Color(0.46, 0.48, 0.43), 0.85))
+	var roof_g := _flat_roof(hood, root, w, d, h,
+		hood.bx_std(Color(0.32, 0.28, 0.24), 0.95))
+	var fz := face * d * 0.5
+	var t := 0.35
+	var rust: Material = hood.bx_mat("rust_patch")
+	# Corrugation: vertical seam strips on the front face.
+	var seam := hood.bx_std(Color(0.30, 0.32, 0.29), 0.9)
+	var sx := -w * 0.5 + 1.0
+	while sx < w * 0.5 - 0.5:
+		if absf(sx) > 1.4: # keep the personnel door clear
+			hood.bx_box(root, Vector3(0.06, h - 0.4, 0.05),
+				Vector3(sx, h * 0.5, fz + fd * (t * 0.5 + 0.02)), seam)
+		sx += 1.75
+	# HEAVY rust banding: a tall rust belt over the grime ring (split for
+	# the doorway), plus drips bleeding from under the roofline.
+	var band_l := (w * 0.5 - 1.1)
+	hood.bx_box(root, Vector3(band_l, 1.3, 0.07),
+		Vector3(-(1.1 + band_l * 0.5), 0.75, fz + fd * 0.18), rust)
+	hood.bx_box(root, Vector3(band_l, 1.3, 0.07),
+		Vector3(1.1 + band_l * 0.5, 0.75, fz + fd * 0.18), rust)
+	hood.bx_box(root, Vector3(w + 0.1, 1.1, 0.07),
+		Vector3(0, 0.65, -fz - fd * 0.18), rust)
+	for _i in 8:
+		var dx := vrng.randf_range(-w * 0.5 + 0.8, w * 0.5 - 0.8)
+		if absf(dx) < 1.6:
+			continue
+		hood.bx_box(root, Vector3(vrng.randf_range(0.15, 0.35),
+				vrng.randf_range(1.2, 2.4), 0.05),
+			Vector3(dx, h - vrng.randf_range(1.0, 1.8),
+				fz + fd * (t * 0.5 + 0.02)), rust)
+	# Personnel door + a shut ribbed rolling door beside it.
+	var door := _door(hood, root, face, d, t, false)
+	var roll_x := 4.2
+	hood.bx_box(root, Vector3(3.6, 3.6, 0.14),
+		Vector3(roll_x, 1.8, fz + fd * 0.05),
+		hood.bx_std(Color(0.38, 0.36, 0.32), 0.8))
+	for ri in 6:
+		hood.bx_box(root, Vector3(3.6, 0.07, 0.05),
+			Vector3(roll_x, 0.5 + float(ri) * 0.55, fz + fd * 0.13), seam)
+	# High barred windows on the sides.
+	for sz in [-2.2, 2.2]:
+		hood.bx_box(root, Vector3(0.08, 0.9, 1.2),
+			Vector3(-w * 0.5 - 0.03, 3.4, sz), hood.bx_mat("window_dark"))
+		hood.bx_box(root, Vector3(0.08, 0.9, 1.2),
+			Vector3(w * 0.5 + 0.03, 3.4, sz), hood.bx_mat("window_dark"))
+	_sign(hood, root, "WAREHOUSE", Vector3(-2.5, h - 0.7, fz + fd * 0.25),
+		Vector3(0, 0, fd), 5.0, 1.0, Color(0.55, 0.25, 0.10),
+		Color(0.95, 0.90, 0.80))
+	# Roof vents + a rusted AC box.
+	hood.bx_box(roof_g, Vector3(0.7, 0.9, 0.7), Vector3(-3.0, h + 0.6, 1.0),
+		hood.bx_std(Color(0.40, 0.38, 0.35), 0.9))
+	hood.bx_box(roof_g, Vector3(1.2, 0.7, 0.9), Vector3(2.0, h + 0.5, -1.5), rust)
+	# Interior: pallet stacks + crate rows down the middle.
+	var wood: Material = hood.bx_mat("wood")
+	for ci in 4:
+		var cx := -4.5 + float(ci) * 2.6 + rng.randf_range(-0.2, 0.2)
+		var cz := bd * rng.randf_range(1.5, 2.5)
+		hood.bx_furn(hood.bx_solid_box(root, Vector3(1.6, 0.14, 1.2),
+			Vector3(cx, 0.07, cz), wood)) # pallet
+		hood.bx_furn(hood.bx_solid_box(root, Vector3(1.3, 0.9, 1.0),
+			Vector3(cx, 0.6, cz), wood)) # crate
+		if rng.randf() < 0.5:
+			hood.bx_furn(hood.bx_solid_box(root, Vector3(1.0, 0.7, 0.8),
+				Vector3(cx + 0.1, 1.4, cz), wood)) # second crate
+	# Scrap-heavy loot; one worker that never clocked out.
+	hood.bx_add_loot(root.position + Vector3(-3.0, 0.6, bd * 1.8),
+		[["scrap", 3], ["cloth", 1]])
+	hood.bx_add_loot(root.position + Vector3(3.0, 0.6, bd * 2.2),
+		[["scrap", 2], ["canned_food", 1]])
+	hood.bx_zombie(root.position + Vector3(rng.randf_range(-3.0, 3.0), 0.3, 0.0))
+	hood.bx_track_interior("warehouse|v=1")
 	return _entry(spec, roof_g, door)

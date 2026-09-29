@@ -83,6 +83,7 @@ var _m_tire: StandardMaterial3D
 var _m_glass: StandardMaterial3D
 var _m_trash: StandardMaterial3D
 var _m_board: StandardMaterial3D
+var _m_board_dark: StandardMaterial3D
 # HD pass materials.
 var _m_trim: StandardMaterial3D      # warm off-white: corner boards, fascia, frames
 var _m_shutter: StandardMaterial3D   # muted shutter color
@@ -116,6 +117,18 @@ var _m_ac: StandardMaterial3D
 var _m_ac_dark: StandardMaterial3D
 var _m_pothole: StandardMaterial3D
 var _m_oil: StandardMaterial3D
+var _m_dash_faded: StandardMaterial3D
+var _m_joint: StandardMaterial3D
+var _m_asphalt_crack: StandardMaterial3D
+var _m_paper: StandardMaterial3D
+var _m_rubble: StandardMaterial3D
+var _m_dent: StandardMaterial3D
+var _m_window_hole: StandardMaterial3D
+var _m_leaf_dead: StandardMaterial3D
+var _m_branch: StandardMaterial3D
+var _m_rock: StandardMaterial3D
+var _m_pine_dark: StandardMaterial3D
+var _m_trunk_dark: StandardMaterial3D
 var _m_leafpile: StandardMaterial3D
 var _m_picture: StandardMaterial3D
 var _m_curtain: StandardMaterial3D
@@ -152,11 +165,13 @@ func build_world(seed: int) -> void:
 	_build_commercial() # before trees/props so they reject building lots
 	_build_streetlights()
 	_build_trees()
+	_build_nature_v2() # rocks, extra bushes, curb saplings (cosmetic scatter)
 	_build_fences()
 	_build_cars()
 	_build_gas_station()
 	_build_props()
 	_build_silhouettes()
+	_build_treeline() # dense forest wall at the boundary: "forest beyond"
 	_build_boundary()
 	_layout_safehouse_info() # sets player_start / safehouse_porch
 	_layout_zombie_spawns()
@@ -508,6 +523,7 @@ func _make_materials() -> void:
 	_m_glass = _std(Color(0.06, 0.08, 0.10), 0.2, 0.7)
 	_m_trash = _std(Color(0.10, 0.10, 0.11))
 	_m_board = _std(Color(0.42, 0.32, 0.20))
+	_m_board_dark = _std(Color(0.20, 0.15, 0.10)) # plank seams / shadow gaps
 	# HD pass.
 	_m_trim = _std(Color(0.78, 0.74, 0.66), 0.85)
 	_m_shutter = _std(Color(0.24, 0.28, 0.30), 0.9)
@@ -539,6 +555,16 @@ func _make_materials() -> void:
 	_m_ac_dark = _std(Color(0.20, 0.20, 0.21), 0.7) # grille, lid
 	_m_pothole = _std(Color(0.07, 0.07, 0.08), 1.0) # broken asphalt
 	_m_oil = _std(Color(0.05, 0.05, 0.07), 0.35, 0.4) # oil stain, slight sheen
+	_m_dash_faded = _std(Color(0.45, 0.40, 0.22), 0.95) # worn lane paint
+	_m_joint = _std(Color(0.09, 0.09, 0.10), 1.0) # sidewalk seams
+	_m_asphalt_crack = _std(Color(0.06, 0.06, 0.07), 1.0) # asphalt cracks
+	_m_paper = _std(Color(0.62, 0.60, 0.55), 1.0) # scattered papers
+	_m_rubble = _std(Color(0.23, 0.22, 0.20), 1.0) # concrete rubble chunks
+	_m_leaf_dead = _std(Color(0.45, 0.42, 0.20), 0.95) # sickly yellow-green canopy
+	_m_branch = _std(Color(0.32, 0.28, 0.24), 1.0) # dead gray-brown wood
+	_m_rock = _std(Color(0.38, 0.37, 0.35), 0.98) # granite rocks
+	_m_pine_dark = _std(Color(0.09, 0.13, 0.08), 1.0) # treeline canopy, near-black
+	_m_trunk_dark = _std(Color(0.16, 0.12, 0.09), 1.0) # treeline trunks
 	_m_leafpile = _std(Color(0.42, 0.28, 0.12), 1.0) # dead leaves
 	_m_picture = _std(Color(0.30, 0.24, 0.16), 0.8) # framed pictures
 	_m_curtain = _std(Color(0.48, 0.38, 0.30), 0.95) # dusty curtains
@@ -546,7 +572,7 @@ func _make_materials() -> void:
 	_m_bed = _std(Color(0.32, 0.24, 0.16), 0.85) # bed frame
 	_m_bedding = _std(Color(0.50, 0.46, 0.40), 0.95) # mattress + blanket
 	_m_rust_patch = _std(Color(0.36, 0.20, 0.10), 1.0) # rust patches
-	_m_grime = _std(Color(0.11, 0.10, 0.08), 1.0) # dark weather grime at wall bases
+	_m_grime = _std(Color(0.070, 0.063, 0.055), 1.0) # V2: heavy grime at wall bases
 
 	_m_headlight = StandardMaterial3D.new()
 	_m_headlight.albedo_color = Color(0.85, 0.82, 0.70)
@@ -562,18 +588,22 @@ func _make_materials() -> void:
 	_window_lit_mat.albedo_color = Color(0.10, 0.09, 0.08)
 	_window_lit_mat.emission_enabled = true
 	_window_lit_mat.emission = Color(1.0, 0.62, 0.28)
-	_window_lit_mat.emission_energy_multiplier = 0.15
+	_window_lit_mat.emission_energy_multiplier = 0.6 # V2: warm windows glow at night
+
+	_m_window_hole = StandardMaterial3D.new()
+	_m_window_hole.albedo_color = Color(0.008, 0.008, 0.010)
+	_m_window_hole.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED # smashed = black hole
 
 	_lamp_mat = StandardMaterial3D.new()
 	_lamp_mat.albedo_color = Color(0.9, 0.85, 0.75)
 	_lamp_mat.emission_enabled = true
 	_lamp_mat.emission = Color(1.0, 0.80, 0.50)
-	_lamp_mat.emission_energy_multiplier = 0.4
+	_lamp_mat.emission_energy_multiplier = 0.8 # V2: brighter bulbs
 
 	_cone_mat = StandardMaterial3D.new()
 	_cone_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	_cone_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	_cone_mat.albedo_color = Color(1.0, 0.80, 0.50, 0.03)
+	_cone_mat.albedo_color = Color(1.0, 0.80, 0.50, 0.06) # V2: visible light pools
 
 	_smoke_tex = _radial_texture(64)
 
@@ -866,19 +896,94 @@ func _build_roads() -> void:
 	for cx in [nx - 7.05, nx - 4.95, nx + 4.95, nx + 7.05]:
 		_box(self, Vector3(0.18, 0.14, 140), Vector3(cx, 0.05, 0), _m_curb)
 	for x in range(-66, 67, 6):
-		_box(self, Vector3(1.6, 0.012, 0.18), Vector3(x, 0.004, ez), dm)
+		if _vrng.randf() < 0.28:
+			continue # worn-away lane paint: the dashes break up
+		var dw := 1.6 * _vrng.randf_range(0.55, 1.0) # some dashes half-gone
+		_box(self, Vector3(dw, 0.012, 0.18), Vector3(x, 0.004, ez),
+			_m_dash_faded if _vrng.randf() < 0.35 else dm)
 	for z in range(-66, 67, 6):
 		if absf(z - ez) > 7.0: # keep the intersection clear
-			_box(self, Vector3(0.18, 0.012, 1.6), Vector3(nx, 0.004, z), dm)
+			if _vrng.randf() < 0.28:
+				continue
+			var dw2 := 1.6 * _vrng.randf_range(0.55, 1.0)
+			_box(self, Vector3(0.18, 0.012, dw2), Vector3(nx, 0.004, z),
+				_m_dash_faded if _vrng.randf() < 0.35 else dm)
+	# Sidewalk expansion joints: thin dark seams every ~6m, one draw call.
+	_build_sidewalk_joints(ez, nx)
+
+
+## Sidewalk expansion joints + asphalt cracks + repair patches, all in one
+## MultiMesh draw call. Seeded wear that makes the roads read as roads.
+## (Cosmetic: _vrng only.)
+func _build_sidewalk_joints(ez: float, nx: float) -> void:
+	var quad := PlaneMesh.new()
+	quad.size = Vector2(1, 1)
+	quad.material = _m_joint
+	var xf: Array[Transform3D] = []
+	var cols: Array[Color] = []
+	# Sidewalk seams across both walks.
+	for x in range(-66, 67, 6):
+		for sz in [ez - 5.0, ez + 5.0]:
+			xf.append(Transform3D(
+				Basis(Vector3.UP, 0.0).scaled(Vector3(0.09, 1, 2.0)),
+				Vector3(x + _vrng.randf_range(-0.4, 0.4), 0.008, sz)))
+			cols.append(Color(1, 1, 1))
+	for z in range(-66, 67, 6):
+		if absf(z - ez) < 8.0:
+			continue
+		for sx in [nx - 6.0, nx + 6.0]:
+			xf.append(Transform3D(
+				Basis(Vector3.UP, 0.0).scaled(Vector3(2.0, 1, 0.09)),
+				Vector3(sx, 0.008, z + _vrng.randf_range(-0.4, 0.4))))
+			cols.append(Color(1, 1, 1))
+	# Asphalt cracks: jagged dark slashes wandering across the lanes.
+	for _i in 34:
+		var on_ew := _vrng.randf() < 0.6
+		var px := _vrng.randf_range(-64.0, 64.0) if on_ew else nx + _vrng.randf_range(-3.2, 3.2)
+		var pz := ez + _vrng.randf_range(-3.2, 3.2) if on_ew else _vrng.randf_range(-64.0, 64.0)
+		var segs := _vrng.randi_range(2, 4)
+		var dir := _vrng.randf() * TAU
+		for _s in segs:
+			var ln := _vrng.randf_range(0.8, 2.2)
+			xf.append(Transform3D(
+				Basis(Vector3.UP, dir + _vrng.randf_range(-0.5, 0.5)).scaled(
+					Vector3(0.10, 1, ln)),
+				Vector3(px, 0.006, pz)))
+			cols.append(Color(0.55, 0.55, 0.58)) # darker: asphalt crack tint
+			px += cos(dir) * ln * 0.8
+			pz += sin(dir) * ln * 0.8
+			dir += _vrng.randf_range(-0.7, 0.7)
+	# Tar repair patches: big dark rectangles over the worst of it.
+	for _i in 12:
+		var on_ew2 := _vrng.randf() < 0.6
+		var qx := _vrng.randf_range(-64.0, 64.0) if on_ew2 else nx + _vrng.randf_range(-3.0, 3.0)
+		var qz := ez + _vrng.randf_range(-3.0, 3.0) if on_ew2 else _vrng.randf_range(-64.0, 64.0)
+		xf.append(Transform3D(
+			Basis(Vector3.UP, _vrng.randf() * TAU).scaled(
+				Vector3(_vrng.randf_range(1.2, 2.6), 1, _vrng.randf_range(0.9, 1.8))),
+			Vector3(qx, 0.005, qz)))
+		cols.append(Color(0.75, 0.75, 0.78))
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.use_colors = true
+	mm.mesh = quad
+	mm.instance_count = xf.size()
+	for i in xf.size():
+		mm.set_instance_transform(i, xf[i])
+		mm.set_instance_color(i, cols[i])
+	var mmi := MultiMeshInstance3D.new()
+	mmi.multimesh = mm
+	add_child(mmi)
 
 
 func _build_road_detail() -> void:
 	# Seeded wear: potholes, oil stains on the asphalt; leaf piles drifted
 	# against curbs. Flat, cheap, purely visual (uses _vrng: never touches
-	# the layout RNG).
+	# the layout RNG). V2: more of everything — the roads should look
+	# chewed up.
 	var ez := road_ew_z
 	var nx := road_ns_x
-	for _i in 8:
+	for _i in 20:
 		var on_ew := _vrng.randf() < 0.6
 		var px: float
 		var pz: float
@@ -905,9 +1010,95 @@ func _build_road_detail() -> void:
 			var r := _vrng.randf_range(0.16, 0.30)
 			_sphere(self, r, lp + Vector3(_vrng.randf_range(-0.5, 0.5), r * 0.4,
 				_vrng.randf_range(-0.5, 0.5)), _m_leafpile, true)
+	_build_dressing_v2()
 
 
-func _house(pos: Vector3, face: float, w: float, d: float, wall: Color, roof_c: Color) -> void:
+## V2 set dressing: scattered papers, curb grass, rubble chunks. Three
+## MultiMesh draw calls total. (Cosmetic: _vrng + _open_spot_visual only.)
+func _build_dressing_v2() -> void:
+	# Scattered papers: pale quads tumbling near curbs.
+	var paper := PlaneMesh.new()
+	paper.size = Vector2(0.32, 0.42)
+	paper.material = _m_paper
+	var pxf: Array[Transform3D] = []
+	var ptries := 0
+	while pxf.size() < 70 and ptries < 500:
+		ptries += 1
+		var p := _curb_spot(true)
+		pxf.append(Transform3D(
+			Basis(Vector3.UP, _vrng.randf() * TAU).scaled(
+				Vector3(_vrng.randf_range(0.7, 1.3), 1, _vrng.randf_range(0.7, 1.3))),
+			p + Vector3(0, 0.015, 0)))
+	_paper_mm(paper, pxf)
+	# Curb grass: dead-yellow tufts forcing through the concrete edges.
+	var tuft := CylinderMesh.new()
+	tuft.top_radius = 0.02
+	tuft.bottom_radius = 0.09
+	tuft.height = 0.5
+	tuft.radial_segments = 5
+	tuft.material = _m_tuft
+	var txf: Array[Transform3D] = []
+	var tcol: Array[Color] = []
+	var ttries := 0
+	while txf.size() < 130 and ttries < 800:
+		ttries += 1
+		var tp := _curb_spot(true)
+		var s := _vrng.randf_range(0.8, 1.7)
+		txf.append(Transform3D(
+			Basis(Vector3.UP, _vrng.randf() * TAU).scaled(Vector3(s, s, s)),
+			tp + Vector3(0, 0.22, 0)))
+		# Dead-grass tint: green -> straw yellow.
+		tcol.append(Color(1, 1, 1).lerp(Color(1.9, 1.5, 0.6), _vrng.randf() * 0.75))
+	var tmm := MultiMesh.new()
+	tmm.transform_format = MultiMesh.TRANSFORM_3D
+	tmm.use_colors = true
+	tmm.mesh = tuft
+	tmm.instance_count = txf.size()
+	for i in txf.size():
+		tmm.set_instance_transform(i, txf[i])
+		tmm.set_instance_color(i, tcol[i])
+	var tmmi := MultiMeshInstance3D.new()
+	tmmi.multimesh = tmm
+	add_child(tmmi)
+	# Rubble chunks: dark concrete teeth along the roads.
+	var chunk := BoxMesh.new()
+	chunk.size = Vector3(0.5, 0.3, 0.4)
+	chunk.material = _m_rubble
+	var rxf: Array[Transform3D] = []
+	var rtries := 0
+	while rxf.size() < 46 and rtries < 400:
+		rtries += 1
+		var rp := _curb_spot(true)
+		rxf.append(Transform3D(
+			Basis(Vector3.UP, _vrng.randf() * TAU).scaled(
+				Vector3(_vrng.randf_range(0.5, 1.6), _vrng.randf_range(0.4, 1.0),
+					_vrng.randf_range(0.5, 1.4))),
+			rp + Vector3(0, 0.08, 0)))
+	var rmm := MultiMesh.new()
+	rmm.transform_format = MultiMesh.TRANSFORM_3D
+	rmm.mesh = chunk
+	rmm.instance_count = rxf.size()
+	for i in rxf.size():
+		rmm.set_instance_transform(i, rxf[i])
+	var rmmi := MultiMeshInstance3D.new()
+	rmmi.multimesh = rmm
+	add_child(rmmi)
+
+
+func _paper_mm(paper: PlaneMesh, xf: Array[Transform3D]) -> void:
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.mesh = paper
+	mm.instance_count = xf.size()
+	for i in xf.size():
+		mm.set_instance_transform(i, xf[i])
+	var mmi := MultiMeshInstance3D.new()
+	mmi.multimesh = mm
+	add_child(mmi)
+
+
+func _house(pos: Vector3, face: float, w: float, d: float, wall: Color, roof_c: Color,
+		shack := false) -> void:
 	# QA pass: houses are enterable — four real walls (front wall has a door
 	# gap), a hinged door every house gets, a simple furnished interior, and
 	# a roof group that hides while the player is inside (camera would
@@ -915,12 +1106,23 @@ func _house(pos: Vector3, face: float, w: float, d: float, wall: Color, roof_c: 
 	# HD pass: trim everywhere — corner boards, foundation skirt, fascia,
 	# ridge cap, framed windows with sills + shutters, paneled door with
 	# frame + step, per-house roof color, lawn patch.
+	# Shack variant (kit-inspired 8x2.9x6-ish cabin): weathered plank walls
+	# with seams, squat roof, no chimney/AC/mailbox — same door/interior
+	# contract, so safehouse/furniture/minimap all keep working.
 	var root := Node3D.new()
 	root.position = pos
 	add_child(root)
-	var h := 3.2
+	var h := 2.9 if shack else 3.2
 	var t := 0.3 # wall thickness
+	if shack:
+		# Weathered plank: gray-brown or sun-bleached gray.
+		wall = Color(0.40, 0.31, 0.22) if _vrng.randf() < 0.5 \
+			else Color(0.45, 0.44, 0.40)
 	var wall_mat := _std(wall)
+	# V2: per-house tonal drift — no two facades weather the same.
+	# (Cosmetic: _vrng only; the seeded palette draw above is untouched.)
+	var drift := _vrng.randf_range(0.78, 1.06)
+	wall_mat.albedo_color = wall * Color(drift, drift * _vrng.randf_range(0.97, 1.03), drift * _vrng.randf_range(0.94, 1.02))
 	var fz := face * (d * 0.5) # front wall plane (local)
 	var door_w := 1.4
 	var door_h := 2.2
@@ -953,16 +1155,22 @@ func _house(pos: Vector3, face: float, w: float, d: float, wall: Color, roof_c: 
 	# Grime band: dark weather staining on the wall bases — the apocalypse
 	# shows at the bottom of every wall. A ring of thin strips proud of
 	# the walls (front split for the door gap), so it never blocks entry.
-	# (Cosmetic: no _rng.)
-	var gz := 0.325 # grime strip center height
+	# V2: tall rot band; each strip gets its own height so it reads as
+	# creeping rot, not a painted stripe. (Cosmetic: no _rng.)
 	var gout := 0.16 # strip center offset from the wall plane
-	_box(root, Vector3(w + 0.08, 0.55, 0.06), Vector3(0, gz, -face * (d * 0.5) - face * gout), _m_grime)
-	_box(root, Vector3(0.06, 0.55, d + 0.08), Vector3(-w * 0.5 - gout, gz, 0), _m_grime)
-	_box(root, Vector3(0.06, 0.55, d + 0.08), Vector3(w * 0.5 + gout, gz, 0), _m_grime)
-	_box(root, Vector3(seg_w + 0.04, 0.55, 0.06),
-		Vector3(-(door_w * 0.5 + seg_w * 0.5), gz, fz + face * gout), _m_grime)
-	_box(root, Vector3(seg_w + 0.04, 0.55, 0.06),
-		Vector3(door_w * 0.5 + seg_w * 0.5, gz, fz + face * gout), _m_grime)
+	var gh := [_vrng.randf_range(0.65, 1.05), _vrng.randf_range(0.65, 1.05),
+		_vrng.randf_range(0.65, 1.05), _vrng.randf_range(0.65, 1.05),
+		_vrng.randf_range(0.65, 1.05)]
+	_box(root, Vector3(w + 0.08, gh[0], 0.06),
+		Vector3(0, gh[0] * 0.5 + 0.05, -face * (d * 0.5) - face * gout), _m_grime)
+	_box(root, Vector3(0.06, gh[1], d + 0.08),
+		Vector3(-w * 0.5 - gout, gh[1] * 0.5 + 0.05, 0), _m_grime)
+	_box(root, Vector3(0.06, gh[2], d + 0.08),
+		Vector3(w * 0.5 + gout, gh[2] * 0.5 + 0.05, 0), _m_grime)
+	_box(root, Vector3(seg_w + 0.04, gh[3], 0.06),
+		Vector3(-(door_w * 0.5 + seg_w * 0.5), gh[3] * 0.5 + 0.05, fz + face * gout), _m_grime)
+	_box(root, Vector3(seg_w + 0.04, gh[4], 0.06),
+		Vector3(door_w * 0.5 + seg_w * 0.5, gh[4] * 0.5 + 0.05, fz + face * gout), _m_grime)
 	# Corner boards.
 	for cx in [-w * 0.5, w * 0.5]:
 		for cz in [-d * 0.5, d * 0.5]:
@@ -973,18 +1181,29 @@ func _house(pos: Vector3, face: float, w: float, d: float, wall: Color, roof_c: 
 	var roof_mat := _std(roof_c, 0.95)
 	roof_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	var roof := MeshInstance3D.new()
-	roof.mesh = _prism_mesh(w * 0.5 + 0.5, 1.9, d + 1.0)
+	var prism_h := 1.1 if shack else 1.9 # shacks get a squat cabin roof
+	roof.mesh = _prism_mesh(w * 0.5 + 0.5, prism_h, d + 1.0)
 	roof.position = Vector3(0, h, 0)
 	roof.material_override = roof_mat
 	roof_g.add_child(roof)
 	# Ridge cap + fascia boards along the eaves.
-	_box(roof_g, Vector3(0.34, 0.16, d + 1.05), Vector3(0, h + 1.95, 0), roof_mat)
+	_box(roof_g, Vector3(0.34, 0.16, d + 1.05), Vector3(0, h + prism_h + 0.05, 0), roof_mat)
 	for ex in [-1.0, 1.0]:
 		_box(roof_g, Vector3(0.16, 0.26, d + 1.05),
 			Vector3(ex * (w * 0.5 + 0.5), h + 0.10, 0), _m_trim)
-	# Chimney with cap.
-	_box(roof_g, Vector3(0.6, 1.2, 0.6), Vector3(w * 0.25, h + 1.3, d * 0.12), _m_chimney)
-	_box(roof_g, Vector3(0.8, 0.14, 0.8), Vector3(w * 0.25, h + 1.95, d * 0.12), _m_trim)
+	if not shack:
+		# Chimney with cap (houses only — shacks heat with a barrel stove).
+		_box(roof_g, Vector3(0.6, 1.2, 0.6), Vector3(w * 0.25, h + 1.3, d * 0.12), _m_chimney)
+		_box(roof_g, Vector3(0.8, 0.14, 0.8), Vector3(w * 0.25, h + 1.95, d * 0.12), _m_trim)
+	else:
+		# Vertical plank seams on the shack walls.
+		var seam_x := -w * 0.5 + 0.9
+		while seam_x < w * 0.5 - 0.5:
+			_box(root, Vector3(0.05, h, 0.04),
+				Vector3(seam_x, h * 0.5, fz + face * (t * 0.5 + 0.01)), _m_board_dark)
+			_box(root, Vector3(0.05, h, 0.04),
+				Vector3(seam_x, h * 0.5, -face * (d * 0.5) - face * (t * 0.5 + 0.01)), _m_board_dark)
+			seam_x += 0.9
 	# Door frame + paneled door on a hinge pivot (left edge).
 	var fz_out := fz + face * (t * 0.5)
 	_box(root, Vector3(0.18, door_h + 0.18, 0.16),
@@ -1015,34 +1234,45 @@ func _house(pos: Vector3, face: float, w: float, d: float, wall: Color, roof_c: 
 	_build_interior(root, w, d, face)
 	# Lawn patch grounding the house.
 	_box(root, Vector3(w + 5.0, 0.02, d + 5.0), Vector3(0, 0.005, 0), _m_lawn)
-	# Windows: framed, with sills; shutters on the front pair. About a
-	# quarter are smashed — the apocalypse shows. (Uses _vrng: cosmetic.)
+	# Windows: framed, with sills; shutters on the front pair. V2: ~40%
+	# are smashed — broken dark holes, not just cracked glass. (Uses
+	# _vrng: cosmetic.)
 	var out_f := face * (d * 0.5 + t * 0.5 + 0.03)
-	_window(root, Vector3(-w * 0.28, 1.7, out_f), Vector3(0, 0, face), true,
-		_vrng.randf() < 0.25)
-	_window(root, Vector3(w * 0.28, 1.7, out_f), Vector3(0, 0, face), true,
-		_vrng.randf() < 0.25)
-	_window(root, Vector3(-w * 0.5 - t * 0.5 - 0.03, 1.7, 0.0), Vector3(-1, 0, 0),
-		false, _vrng.randf() < 0.25)
-	_window(root, Vector3(w * 0.5 + t * 0.5 + 0.03, 1.7, 0.0), Vector3(1, 0, 0),
-		false, _vrng.randf() < 0.25)
-	# Porch posts flanking the door step.
-	for rx in [-1.45, 1.45]:
-		_box(root, Vector3(0.09, 0.85, 0.09), Vector3(rx, 0.42, fz + face * 1.15),
-			_m_trim)
-	# Mailbox on a post near the walk.
-	var mbx := w * 0.5 + 1.6
-	_box(root, Vector3(0.09, 1.05, 0.09), Vector3(mbx, 0.52, fz + face * 2.2),
-		_m_wood)
-	_box(root, Vector3(0.28, 0.22, 0.5), Vector3(mbx, 1.12, fz + face * 2.2),
-		_m_mailbox)
-	_box(root, Vector3(0.05, 0.18, 0.05), Vector3(mbx + 0.17, 1.28, fz + face * 2.2),
-		_m_mailbox_flag) # red flag up
-	# AC unit humming against the side wall.
-	var acx := w * 0.5 + 0.45
-	_box(root, Vector3(0.75, 0.65, 0.65), Vector3(acx, 0.33, 0.5), _m_ac)
-	_box(root, Vector3(0.5, 0.4, 0.03), Vector3(acx - 0.38, 0.33, 0.5),
-		_m_ac_dark) # fan grille
+	var broke_chance := 0.55 if shack else 0.40 # shacks are rougher
+	var win_y := 1.6 if shack else 1.7
+	_window(root, Vector3(-w * 0.28, win_y, out_f), Vector3(0, 0, face), not shack,
+		_vrng.randf() < broke_chance)
+	_window(root, Vector3(w * 0.28, win_y, out_f), Vector3(0, 0, face), not shack,
+		_vrng.randf() < broke_chance)
+	if shack:
+		# One small side window, usually smashed; then a discard draw so the
+		# layout RNG consumes 4 window rolls per house either way.
+		_window(root, Vector3(w * 0.5 + t * 0.5 + 0.03, win_y, 0.0), Vector3(1, 0, 0),
+			false, _vrng.randf() < 0.65)
+		_rng.randf()
+	else:
+		_window(root, Vector3(-w * 0.5 - t * 0.5 - 0.03, 1.7, 0.0), Vector3(-1, 0, 0),
+			false, _vrng.randf() < 0.40)
+		_window(root, Vector3(w * 0.5 + t * 0.5 + 0.03, 1.7, 0.0), Vector3(1, 0, 0),
+			false, _vrng.randf() < 0.40)
+	if not shack:
+		# Porch posts flanking the door step.
+		for rx in [-1.45, 1.45]:
+			_box(root, Vector3(0.09, 0.85, 0.09), Vector3(rx, 0.42, fz + face * 1.15),
+				_m_trim)
+		# Mailbox on a post near the walk.
+		var mbx := w * 0.5 + 1.6
+		_box(root, Vector3(0.09, 1.05, 0.09), Vector3(mbx, 0.52, fz + face * 2.2),
+			_m_wood)
+		_box(root, Vector3(0.28, 0.22, 0.5), Vector3(mbx, 1.12, fz + face * 2.2),
+			_m_mailbox)
+		_box(root, Vector3(0.05, 0.18, 0.05), Vector3(mbx + 0.17, 1.28, fz + face * 2.2),
+			_m_mailbox_flag) # red flag up
+		# AC unit humming against the side wall.
+		var acx := w * 0.5 + 0.45
+		_box(root, Vector3(0.75, 0.65, 0.65), Vector3(acx, 0.33, 0.5), _m_ac)
+		_box(root, Vector3(0.5, 0.4, 0.03), Vector3(acx - 0.38, 0.33, 0.5),
+			_m_ac_dark) # fan grille
 	var door := {
 		"pivot": pivot, "blocker": blocker, "veil": veil,
 		"pos": pos + Vector3(0, 0, fz), "open": false, "safehouse": false,
@@ -1142,7 +1372,7 @@ func _window(root: Node3D, center: Vector3, outward: Vector3, shutters: bool,
 	var lit := _rng.randf() < 0.55
 	var mat: StandardMaterial3D
 	if broken:
-		mat = _m_window_dark
+		mat = _m_window_hole # V2: smashed panes are near-black holes
 	elif lit:
 		mat = _window_lit_mat
 	else:
@@ -1269,9 +1499,14 @@ func _build_houses() -> void:
 	]
 	for spec in _lot_specs:
 		var s := spec as Dictionary
-		_house(s["pos"], float(s["face"]), float(s["w"]), float(s["d"]),
-			walls[_rng.randi() % walls.size()],
-			roofs[_rng.randi() % roofs.size()])
+		# Palette draws stay in seed order. (The shack-variant experiment was
+		# reverted: replacing houses changed the layout hash and violated the
+		# purely-additive rule, so every house builds at its spec'd dims.)
+		var wc: Color = walls[_rng.randi() % walls.size()]
+		var rc: Color = roofs[_rng.randi() % roofs.size()]
+		var sw := float(s["w"])
+		var sd := float(s["d"])
+		_house(s["pos"], float(s["face"]), sw, sd, wc, rc, false)
 	# The safehouse: one random house gets the boards.
 	safehouse_index = _rng.randi() % houses.size()
 	_board_house(houses[safehouse_index] as Dictionary)
@@ -1355,6 +1590,19 @@ func _build_trees() -> void:
 
 
 func _tree(pos: Vector3, s: float) -> void:
+	# One layout-RNG draw per tree (sway phase), exactly as before — the
+	# variant itself is cosmetic (_vrng) so the layout stream never shifts.
+	var phase := _rng.randf() * TAU
+	var kind := _vrng.randf()
+	if kind < 0.35:
+		_tree_dead_pine(pos, s, phase)
+	elif kind < 0.60:
+		_tree_bare_oak(pos, s, phase)
+	else:
+		_tree_leafy(pos, s, phase, _vrng.randf() < 0.35)
+
+
+func _tree_leafy(pos: Vector3, s: float, phase: float, sickly: bool) -> void:
 	var root := Node3D.new()
 	root.position = pos
 	add_child(root)
@@ -1363,12 +1611,156 @@ func _tree(pos: Vector3, s: float) -> void:
 	var pivot := Node3D.new()
 	pivot.position = Vector3(0, 2.5 * s, 0)
 	root.add_child(pivot)
-	_sphere(pivot, 1.35 * s, Vector3(0, 0.4 * s, 0), _m_leaf, true) # faceted canopy
+	# Sickly trees keep the shape but wear the dying-yellow canopy.
+	var leaf_a := _m_leaf_dead if sickly else _m_leaf
+	_sphere(pivot, 1.35 * s, Vector3(0, 0.4 * s, 0), leaf_a, true) # faceted canopy
 	_sphere(pivot, 1.00 * s, Vector3(0.9 * s, -0.1 * s, 0.4 * s), _m_leaf2, true)
 	_sphere(pivot, 0.95 * s, Vector3(-0.85 * s, 0.0, -0.35 * s), _m_leaf2, true)
-	_sphere(pivot, 0.70 * s, Vector3(0.1 * s, 1.15 * s, -0.2 * s), _m_leaf, true) # crown
-	_sway.append([pivot, _rng.randf() * TAU, 0.035])
+	_sphere(pivot, 0.70 * s, Vector3(0.1 * s, 1.15 * s, -0.2 * s), leaf_a, true) # crown
+	_sway.append([pivot, phase, 0.035])
 	_solid(root, Vector3(0.5, 2.2, 0.5), Vector3(0, 1.1, 0))
+
+
+func _tree_dead_pine(pos: Vector3, s: float, phase: float) -> void:
+	# A pine that didn't make it: snapped top, bare gray limbs, no needles.
+	var root := Node3D.new()
+	root.position = pos
+	add_child(root)
+	_cyl(root, 0.10 * s, 0.20 * s, 3.4 * s, Vector3(0, 1.7 * s, 0), _m_branch)
+	_cyl(root, 0.26 * s, 0.34 * s, 0.40 * s, Vector3(0, 0.2 * s, 0), _m_branch)
+	_cyl(root, 0.09 * s, 0.05 * s, 0.5 * s, Vector3(0.14 * s, 3.55 * s, 0), _m_branch) # snapped tip
+	var pivot := Node3D.new()
+	pivot.position = Vector3(0, 2.4 * s, 0)
+	root.add_child(pivot)
+	for _i in _vrng.randi_range(3, 4):
+		var a := _vrng.randf() * TAU
+		var lean := _vrng.randf_range(0.5, 1.0)
+		var ln := _vrng.randf_range(0.8, 1.3) * s
+		var br := _cyl(pivot, 0.02 * s, 0.05 * s, ln,
+			Vector3(cos(a) * ln * 0.32, _vrng.randf_range(-0.3, 0.4) * s,
+				sin(a) * ln * 0.32), _m_branch)
+		br.rotation = Vector3(sin(a) * lean, 0.0, -cos(a) * lean)
+	_sway.append([pivot, phase, 0.02])
+	_solid(root, Vector3(0.5, 3.2, 0.5), Vector3(0, 1.6, 0))
+
+
+func _tree_bare_oak(pos: Vector3, s: float, phase: float) -> void:
+	# Twisted leafless oak: thick trunk, gnarled branches reaching up.
+	var root := Node3D.new()
+	root.position = pos
+	add_child(root)
+	_cyl(root, 0.16 * s, 0.30 * s, 2.4 * s, Vector3(0, 1.2 * s, 0), _m_bark)
+	_cyl(root, 0.36 * s, 0.46 * s, 0.40 * s, Vector3(0, 0.2 * s, 0), _m_bark)
+	var pivot := Node3D.new()
+	pivot.position = Vector3(0, 2.3 * s, 0)
+	root.add_child(pivot)
+	for _i in _vrng.randi_range(4, 6):
+		var a := _vrng.randf() * TAU
+		var lean := _vrng.randf_range(0.3, 0.8)
+		var ln := _vrng.randf_range(1.0, 1.8) * s
+		var br := _cyl(pivot, 0.03 * s, 0.07 * s, ln,
+			Vector3(cos(a) * ln * 0.30, ln * 0.30, sin(a) * ln * 0.30), _m_bark)
+		br.rotation = Vector3(sin(a) * lean, 0.0, -cos(a) * lean)
+		# A forked twig off the main limb.
+		if _vrng.randf() < 0.5:
+			var tw := _cyl(br, 0.015 * s, 0.03 * s, ln * 0.5,
+				Vector3(0, ln * 0.35, 0), _m_branch)
+			tw.rotation.z = _vrng.randf_range(-0.7, 0.7)
+	_sway.append([pivot, phase, 0.025])
+	_solid(root, Vector3(0.6, 2.6, 0.6), Vector3(0, 1.3, 0))
+
+
+## V2 nature scatter: rocks, extra bushes, curb saplings. Purely cosmetic
+## (_vrng + _open_spot_visual): never touches layout RNG or the hash.
+func _build_nature_v2() -> void:
+	# Granite rocks: one or two faceted lumps each.
+	for _i in 16:
+		var p := _open_spot_visual(1.5)
+		var s := _vrng.randf_range(0.5, 1.3)
+		var r1 := _sphere(self, 0.55 * s, p + Vector3(0, 0.22 * s, 0), _m_rock, true)
+		r1.scale.y = 0.6
+		if _vrng.randf() < 0.6:
+			var r2 := _sphere(self, 0.32 * s,
+				p + Vector3(0.45 * s, 0.12 * s, 0.25 * s), _m_rock, true)
+			r2.scale.y = 0.5
+	# Extra bushes clustered on open ground (the house-front ones stay).
+	for _i in 18:
+		var bp := _open_spot_visual(1.0)
+		var b := _sphere(self, _vrng.randf_range(0.5, 0.9),
+			bp + Vector3(0, 0.32, 0), _m_bush, true)
+		b.scale.y = 0.65
+	# Curb saplings: small dead pines leaning over the sidewalks.
+	for _i in 8:
+		var sp := _curb_spot(true)
+		_tree_dead_pine(sp, _vrng.randf_range(0.35, 0.55), _vrng.randf() * TAU)
+
+
+## Dense treeline ringing the neighborhood edge — the visible natural
+## boundary ("forest beyond"): dark, thick, swallowing the road ends.
+## Three MultiMesh draw calls total. (Cosmetic: _vrng only.)
+func _build_treeline() -> void:
+	var trunk_mesh := CylinderMesh.new()
+	trunk_mesh.top_radius = 0.14
+	trunk_mesh.bottom_radius = 0.26
+	trunk_mesh.height = 2.4
+	trunk_mesh.radial_segments = 5
+	trunk_mesh.material = _m_trunk_dark
+	var cone_low := CylinderMesh.new()
+	cone_low.top_radius = 0.0
+	cone_low.bottom_radius = 2.2
+	cone_low.height = 4.2
+	cone_low.radial_segments = 6
+	cone_low.material = _m_pine_dark
+	var cone_top := CylinderMesh.new()
+	cone_top.top_radius = 0.0
+	cone_top.bottom_radius = 1.5
+	cone_top.height = 3.2
+	cone_top.radial_segments = 6
+	cone_top.material = _m_pine_dark
+	var t_xf: Array[Transform3D] = []
+	var l_xf: Array[Transform3D] = []
+	var u_xf: Array[Transform3D] = []
+	var cols: Array[Color] = []
+	var n := 84
+	for i in n:
+		var a := TAU * float(i) / float(n) + _vrng.randf_range(-0.05, 0.05)
+		var r := _vrng.randf_range(60.0, 66.0)
+		var p := Vector3(cos(a) * r, 0, sin(a) * r)
+		if _on_road(p, 4.5):
+			continue # the roads run out into the forest, not through trees
+		if _point_in_lots(p, 2.0):
+			continue # never swallow a house lot
+		var s := _vrng.randf_range(0.85, 1.3)
+		var yaw := _vrng.randf() * TAU
+		t_xf.append(Transform3D(Basis(Vector3.UP, yaw).scaled(Vector3(s, s, s)),
+			Vector3(p.x, 1.2 * s, p.z)))
+		l_xf.append(Transform3D(Basis(Vector3.UP, yaw).scaled(Vector3(s, s, s)),
+			Vector3(p.x, 3.9 * s, p.z)))
+		u_xf.append(Transform3D(Basis(Vector3.UP, yaw).scaled(Vector3(s, s, s)),
+			Vector3(p.x, 6.2 * s, p.z)))
+		# Dark canopy tint: deep green -> dead brown.
+		cols.append(Color(1, 1, 1).lerp(Color(1.5, 1.0, 0.7), _vrng.randf()))
+	_add_treeline_mm(trunk_mesh, t_xf, [])
+	_add_treeline_mm(cone_low, l_xf, cols)
+	_add_treeline_mm(cone_top, u_xf, cols)
+
+
+func _add_treeline_mm(mesh: Mesh, xf: Array[Transform3D], cols: Array[Color]) -> void:
+	if xf.is_empty():
+		return
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	if not cols.is_empty():
+		mm.use_colors = true
+	mm.mesh = mesh
+	mm.instance_count = xf.size()
+	for i in xf.size():
+		mm.set_instance_transform(i, xf[i])
+		if not cols.is_empty():
+			mm.set_instance_color(i, cols[i])
+	var mmi := MultiMeshInstance3D.new()
+	mmi.multimesh = mm
+	add_child(mmi)
 
 
 func _build_fences() -> void:
@@ -1463,7 +1855,16 @@ func _car(pos: Vector3, rot_y: float, color: Color, smoking: bool) -> void:
 	root.position = pos
 	root.rotation.y = rot_y
 	add_child(root)
+	# V2: ~35% of cars are wrecks — missing a wheel, dented panels, sitting
+	# crooked. (Cosmetic: _vrng only.)
+	var wrecked := _vrng.randf() < 0.35
+	if wrecked:
+		root.rotation.z = _vrng.randf_range(-0.06, 0.06)
+		root.rotation.x = _vrng.randf_range(-0.04, 0.04)
 	var paint := _std(color, 0.55, 0.25)
+	if wrecked:
+		# Sun-faded, dustier paint on wrecks.
+		paint.albedo_color = color.lerp(Color(0.45, 0.42, 0.38), 0.35)
 	# Lower hull with stepped hood and trunk.
 	_box(root, Vector3(4.2, 0.62, 1.9), Vector3(0, 0.63, 0), paint)
 	_box(root, Vector3(1.0, 0.18, 1.7), Vector3(1.65, 0.98, 0), paint) # hood
@@ -1479,13 +1880,19 @@ func _car(pos: Vector3, rot_y: float, color: Color, smoking: bool) -> void:
 	shield.rotation.z = -0.28
 	var rear := _box(root, Vector3(0.06, 0.44, 1.5), Vector3(-1.24, 1.18, 0), _m_glass)
 	rear.rotation.z = 0.28
-	# Wheels with hubs.
+	# Wheels with hubs — wrecks lose one.
+	var missing_wheel := -1
+	if wrecked:
+		missing_wheel = _vrng.randi() % 4
+	var wi := 0
 	for sx in [-1.35, 1.35]:
 		for sz in [-0.85, 0.85]:
-			var w := _cyl(root, 0.34, 0.34, 0.24, Vector3(sx, 0.34, sz), _m_tire)
-			w.rotation.z = PI * 0.5
-			var hub := _cyl(root, 0.13, 0.13, 0.26, Vector3(sx, 0.34, sz), _m_hub)
-			hub.rotation.z = PI * 0.5
+			if wi != missing_wheel:
+				var w := _cyl(root, 0.34, 0.34, 0.24, Vector3(sx, 0.34, sz), _m_tire)
+				w.rotation.z = PI * 0.5
+				var hub := _cyl(root, 0.13, 0.13, 0.26, Vector3(sx, 0.34, sz), _m_hub)
+				hub.rotation.z = PI * 0.5
+			wi += 1
 	# Bumpers + headlights.
 	_box(root, Vector3(0.28, 0.28, 1.95), Vector3(2.12, 0.55, 0), _m_bumper)
 	_box(root, Vector3(0.28, 0.28, 1.95), Vector3(-2.12, 0.55, 0), _m_bumper)
@@ -1494,6 +1901,17 @@ func _car(pos: Vector3, rot_y: float, color: Color, smoking: bool) -> void:
 	# Small rust patches low on the hull.
 	_box(root, Vector3(0.34, 0.16, 0.03), Vector3(0.9, 0.45, 0.96), _m_rust)
 	_box(root, Vector3(0.28, 0.14, 0.03), Vector3(-1.4, 0.42, -0.96), _m_rust)
+	if wrecked:
+		# Dents: dark crumpled quads slapped on the hull and hood.
+		for _d in _vrng.randi_range(2, 4):
+			var dx := _vrng.randf_range(-1.8, 1.8)
+			var dz := 0.97 if _vrng.randf() < 0.5 else -0.97
+			_box(root, Vector3(_vrng.randf_range(0.4, 0.9), _vrng.randf_range(0.2, 0.4), 0.03),
+				Vector3(dx, _vrng.randf_range(0.45, 0.85), dz), _m_dent,
+				_vrng.randf() * 0.6)
+		# Smashed windshield on half the wrecks.
+		if _vrng.randf() < 0.5:
+			_box(root, Vector3(0.05, 0.4, 1.3), Vector3(0.76, 1.18, 0), _m_window_hole)
 	_solid(root, Vector3(4.3, 1.7, 2.0), Vector3(0, 0.85, 0))
 	if smoking:
 		_smoke(root, Vector3(1.7, 1.4, 0))
