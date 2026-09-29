@@ -26,6 +26,18 @@ var _player: PlayerController
 var _time_manager: TimeManager
 var _noise: NoiseBus
 
+# Phase 3: workbench "Board Barricade" — zombies get gently pushed out of
+# this circle, reducing pressure near the claimed safehouse.
+var _ward_on := false
+var _ward_center := Vector3.ZERO
+var _ward_radius := 0.0
+
+
+func set_ward(center: Vector3, radius: float) -> void:
+	_ward_on = true
+	_ward_center = center
+	_ward_radius = radius
+
 
 func setup(player: PlayerController, tm: TimeManager, noise: NoiseBus) -> void:
 	_player = player
@@ -85,3 +97,10 @@ func _physics_process(_delta: float) -> void:
 				var push := d / dist * (SEPARATION_DIST - dist) * 2.0
 				a.velocity += push
 				b.velocity -= push
+	if _ward_on:
+		for z in live:
+			var to := z.global_position - _ward_center
+			to.y = 0.0
+			var wd := to.length()
+			if wd < _ward_radius and wd > 0.01:
+				z.velocity += to / wd * (_ward_radius - wd) * 2.5

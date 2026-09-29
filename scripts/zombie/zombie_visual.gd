@@ -27,6 +27,16 @@ const FLINCH_TIME := 0.30
 var _flash_t := 0.0
 var _flash_on := false
 var _meshes: Array[MeshInstance3D] = []
+
+# Phase 3: idle variation — occasional twitches so no two zombies stand alike.
+# Offsets are applied differentially (current minus previous frame) so the
+# base pose always wins back with zero residual when the twitch ends.
+var _twitch_t := 2.0
+var _twitch_kind := 0 # 0 none, 1 head snap, 2 arm spasm, 3 body shudder
+var _twitch_dur := 0.5
+var _twitch_el := 0.0
+var _twitch_dir := 1.0
+var _twitch_prev := 0.0
 static var _flash_mat: StandardMaterial3D = null
 
 # Shared materials, built once for every zombie.
@@ -180,6 +190,39 @@ func _idle_sway(delta: float) -> void:
 	_body.rotation.z = sin(_phase) * 0.03
 	_head.rotation.z = sin(_phase * 0.7) * 0.10
 	_head.rotation.x = 0.18
+	_apply_twitch(delta)
+
+
+func _apply_twitch(delta: float) -> void:
+	# Additive overlay: every few seconds one random twitch fires.
+	_twitch_t -= delta
+	if _twitch_kind == 0 and _twitch_t <= 0.0:
+		_twitch_kind = randi_range(1, 3)
+		_twitch_dur = randf_range(0.35, 0.65)
+		_twitch_el = 0.0
+		_twitch_dir = 1.0 if randf() < 0.5 else -1.0
+		_twitch_prev = 0.0
+		_twitch_t = randf_range(2.5, 6.5)
+	if _twitch_kind == 0:
+		return
+	_twitch_el += delta
+	var t := clampf(_twitch_el / _twitch_dur, 0.0, 1.0)
+	var f := sin(t * PI)
+	var d := f - _twitch_prev # differential: no accumulation, no residue
+	_twitch_prev = f
+	match _twitch_kind:
+		1: # head snap
+			_head.rotation.y += d * 0.70 * _twitch_dir
+			_head.rotation.x = 0.18 - f * 0.22 # base pose sets this absolutely
+		2: # arm spasm
+			_arm_r.rotation.x -= d * 0.80
+			_arm_r.rotation.z -= d * 0.50 * _twitch_dir
+		3: # body shudder
+			_body.rotation.z += d * 0.12 * _twitch_dir
+			_body.rotation.x -= d * 0.10
+	if t >= 1.0:
+		_twitch_kind = 0
+		_twitch_prev = 0.0
 
 
 func _lunge(delta: float) -> void:

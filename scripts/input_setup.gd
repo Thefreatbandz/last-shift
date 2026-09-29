@@ -12,6 +12,8 @@ static func configure() -> void:
 	_bind("rotate_left", [KEY_Q])
 	_bind("rotate_right", [KEY_E])
 	_bind("attack", [KEY_SPACE])
+	_bind("interact", [KEY_F]) # Phase 3: use / search / claim
+	_bind("inventory", [KEY_TAB, KEY_I]) # Phase 3: backpack panel
 	# Left mouse click also attacks (desktop). Re-applied cleanly so
 	# repeated configure() calls never stack duplicate events.
 	InputMap.action_erase_events("attack")

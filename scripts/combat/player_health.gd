@@ -13,12 +13,24 @@ var _dead := false
 var _player: PlayerController
 var _hud: Hud
 var _zombies: ZombieManager
+var _respawn_pos := RESPAWN_POS # Phase 3: claiming the safehouse moves this
 
 
 func setup(player: PlayerController, hud: Hud, zombies: ZombieManager) -> void:
 	_player = player
 	_hud = hud
 	_zombies = zombies
+	_hud.set_health(hp, MAX_HP)
+
+
+func set_respawn(pos: Vector3) -> void:
+	_respawn_pos = pos
+
+
+func heal(amount: float) -> void:
+	if _dead:
+		return
+	hp = minf(MAX_HP, hp + amount)
 	_hud.set_health(hp, MAX_HP)
 
 
@@ -32,6 +44,7 @@ func damage(amount: float) -> void:
 	hp = maxf(0.0, hp - amount)
 	_hud.set_health(hp, MAX_HP)
 	_hud.flash_damage()
+	(_player.get_node("Visual") as PlayerVisual).play_hurt_flinch()
 	if hp <= 0.0:
 		_die()
 
@@ -46,7 +59,7 @@ func respawn() -> void:
 		return
 	_dead = false
 	hp = MAX_HP
-	_player.global_position = RESPAWN_POS
+	_player.global_position = _respawn_pos
 	_player.velocity = Vector3.ZERO
 	_zombies.reset_all()
 	_hud.set_health(hp, MAX_HP)

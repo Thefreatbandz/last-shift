@@ -34,6 +34,35 @@ var _noise_t := 0.0
 var _suppress := 0.0
 var _hitstop_gen := 0
 
+# Phase 3: workbench "Spiked Bat" upgrade.
+var _damage_bonus := 0.0
+var _spiked := false
+
+
+func add_damage_bonus(amount: float) -> void:
+	_damage_bonus += amount
+
+
+func add_spikes() -> void:
+	if _spiked or _weapon_pivot == null:
+		return
+	_spiked = true
+	var steel := StandardMaterial3D.new()
+	steel.albedo_color = Color(0.50, 0.51, 0.53)
+	steel.metallic = 0.75
+	steel.roughness = 0.35
+	# Long spikes driven through the bat at angles.
+	for i in 6:
+		var spike := MeshInstance3D.new()
+		var sm := BoxMesh.new()
+		sm.size = Vector3(0.02, 0.02, 0.16)
+		spike.mesh = sm
+		spike.position = Vector3(0, -0.05 + 0.11 * i, 0.0)
+		spike.rotation.x = 0.5 + 0.22 * float(i % 3)
+		spike.rotation.y = 0.9 * float(i)
+		spike.material_override = steel
+		_weapon_pivot.add_child(spike)
+
 
 func suppress_attack(seconds: float) -> void:
 	_suppress = maxf(_suppress, seconds)
@@ -160,7 +189,7 @@ func _apply_hit() -> void:
 			continue
 		if fwd.dot(to.normalized()) < cos(deg_to_rad(ARC_DEG)):
 			continue
-		var died: bool = z.take_damage(DAMAGE, _player.global_position)
+		var died: bool = z.take_damage(DAMAGE + _damage_bonus, _player.global_position)
 		_blood.burst(z.global_position + Vector3(0, 1.25, 0))
 		hit_any = true
 		killed_any = killed_any or died

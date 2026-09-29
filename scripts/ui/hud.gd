@@ -8,6 +8,8 @@ extends CanvasLayer
 ## and the YOU DIED respawn overlay.
 
 signal respawn_requested
+signal interact_pressed # touch USE button
+signal backpack_pressed # touch backpack button
 
 var move_vector := Vector2.ZERO
 var touch_mode := false
@@ -28,6 +30,21 @@ var _vignette: ColorRect
 var _flash := 0.0
 var _pulse_t := 0.0
 var _death_overlay: Button
+
+# Phase 3: interact prompt + touch USE, backpack button, search progress bar,
+# sleep fade, "While You Slept" teaser.
+var _prompt_label: Label
+var _use_btn: Button
+var _pack_btn: Button
+var _work_label: Label
+var _work_bg: ColorRect
+var _work_fill: ColorRect
+var _work_t := 0.0
+var _work_dur := 1.0
+var _fade: ColorRect
+var _toast: Label
+var _toast_sub: Label
+var _toast_t := 0.0
 
 
 func _ready() -> void:
@@ -99,7 +116,7 @@ func _ready() -> void:
 	_hint_label.offset_top = 40
 	_hint_label.offset_right = 560
 	_hint_label.offset_bottom = 140
-	_hint_label.text = "WASD / ARROWS — move\nSHIFT — sprint   SPACE / CLICK — attack\nQ / E — rotate camera"
+	_hint_label.text = "WASD / ARROWS — move\nSHIFT — sprint   SPACE / CLICK — attack\nQ / E — rotate camera   F — use/search   TAB — backpack"
 	_hint_label.add_theme_font_size_override("font_size", 15)
 	_hint_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.65))
 	_hint_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -199,15 +216,158 @@ func _ready() -> void:
 	_death_overlay.pressed.connect(func() -> void: respawn_requested.emit())
 	root.add_child(_death_overlay)
 
+	# --- Phase 3: interact prompt label (bottom-center) ---
+	_prompt_label = Label.new()
+	_prompt_label.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	_prompt_label.offset_left = -300
+	_prompt_label.offset_right = 300
+	_prompt_label.offset_top = -352
+	_prompt_label.offset_bottom = -318
+	_prompt_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_prompt_label.add_theme_font_size_override("font_size", 20)
+	_prompt_label.add_theme_color_override("font_color", Color(1.0, 0.88, 0.55))
+	_prompt_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
+	_prompt_label.add_theme_constant_override("shadow_offset_x", 2)
+	_prompt_label.add_theme_constant_override("shadow_offset_y", 2)
+	_prompt_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_prompt_label.visible = false
+	root.add_child(_prompt_label)
+
+	# --- Phase 3: touch USE button (bottom-right, above ATTACK) ---
+	_use_btn = Button.new()
+	_use_btn.text = "USE"
+	_use_btn.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	_use_btn.offset_left = -190
+	_use_btn.offset_top = -300
+	_use_btn.offset_right = -60
+	_use_btn.offset_bottom = -220
+	_use_btn.focus_mode = Control.FOCUS_NONE
+	_use_btn.add_theme_font_size_override("font_size", 20)
+	var ub := StyleBoxFlat.new()
+	ub.bg_color = Color(0.75, 0.60, 0.15, 0.55)
+	ub.set_corner_radius_all(45)
+	ub.border_width_left = 3
+	ub.border_width_right = 3
+	ub.border_width_top = 3
+	ub.border_width_bottom = 3
+	ub.border_color = Color(1.0, 0.88, 0.55, 0.70)
+	_use_btn.add_theme_stylebox_override("normal", ub)
+	var ub2 := ub.duplicate() as StyleBoxFlat
+	ub2.bg_color = Color(0.95, 0.78, 0.25, 0.75)
+	_use_btn.add_theme_stylebox_override("pressed", ub2)
+	_use_btn.add_theme_stylebox_override("hover", ub)
+	_use_btn.visible = false
+	_use_btn.button_down.connect(func() -> void: interact_pressed.emit())
+	root.add_child(_use_btn)
+
+	# --- Phase 3: touch backpack button (top-right) ---
+	_pack_btn = Button.new()
+	_pack_btn.text = "PACK"
+	_pack_btn.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_pack_btn.offset_left = -92
+	_pack_btn.offset_top = 14
+	_pack_btn.offset_right = -16
+	_pack_btn.offset_bottom = 66
+	_pack_btn.focus_mode = Control.FOCUS_NONE
+	_pack_btn.add_theme_font_size_override("font_size", 16)
+	var pb := StyleBoxFlat.new()
+	pb.bg_color = Color(0.10, 0.11, 0.13, 0.70)
+	pb.set_corner_radius_all(10)
+	pb.border_width_left = 2
+	pb.border_width_right = 2
+	pb.border_width_top = 2
+	pb.border_width_bottom = 2
+	pb.border_color = Color(0.45, 0.38, 0.28, 0.9)
+	_pack_btn.add_theme_stylebox_override("normal", pb)
+	var pb2 := pb.duplicate() as StyleBoxFlat
+	pb2.bg_color = Color(0.20, 0.21, 0.23, 0.85)
+	_pack_btn.add_theme_stylebox_override("pressed", pb2)
+	_pack_btn.add_theme_stylebox_override("hover", pb)
+	_pack_btn.visible = false
+	_pack_btn.button_down.connect(func() -> void: backpack_pressed.emit())
+	root.add_child(_pack_btn)
+
+	# --- Phase 3: work progress bar (bottom-center, e.g. SEARCHING) ---
+	_work_label = Label.new()
+	_work_label.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	_work_label.offset_left = -300
+	_work_label.offset_right = 300
+	_work_label.offset_top = -300
+	_work_label.offset_bottom = -276
+	_work_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_work_label.add_theme_font_size_override("font_size", 16)
+	_work_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.85))
+	_work_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_work_label.visible = false
+	root.add_child(_work_label)
+	_work_bg = ColorRect.new()
+	_work_bg.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	_work_bg.offset_left = -150
+	_work_bg.offset_right = 150
+	_work_bg.offset_top = -272
+	_work_bg.offset_bottom = -260
+	_work_bg.color = Color(0, 0, 0, 0.60)
+	_work_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_work_bg.visible = false
+	root.add_child(_work_bg)
+	_work_fill = ColorRect.new()
+	_work_fill.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	_work_fill.offset_left = -148
+	_work_fill.offset_right = -148
+	_work_fill.offset_top = -270
+	_work_fill.offset_bottom = -262
+	_work_fill.color = Color(0.95, 0.75, 0.30, 0.95)
+	_work_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_work_fill.visible = false
+	root.add_child(_work_fill)
+
+	# --- Phase 3: sleep fade + "While You Slept" teaser ---
+	_fade = ColorRect.new()
+	_fade.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_fade.color = Color(0, 0, 0, 0.0)
+	_fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(_fade)
+
+	var toast_vbox := VBoxContainer.new()
+	toast_vbox.set_anchors_preset(Control.PRESET_CENTER)
+	toast_vbox.offset_left = -320
+	toast_vbox.offset_right = 320
+	toast_vbox.offset_top = -70
+	toast_vbox.offset_bottom = 70
+	toast_vbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	toast_vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(toast_vbox)
+	_toast = Label.new()
+	_toast.text = "While You Slept..."
+	_toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_toast.add_theme_font_size_override("font_size", 34)
+	_toast.add_theme_color_override("font_color", Color(0.95, 0.88, 0.70))
+	_toast.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
+	_toast.add_theme_constant_override("shadow_offset_x", 2)
+	_toast.add_theme_constant_override("shadow_offset_y", 2)
+	_toast.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_toast.visible = false
+	toast_vbox.add_child(_toast)
+	_toast_sub = Label.new()
+	_toast_sub.text = "The dead kept walking. Daybreak is yours."
+	_toast_sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_toast_sub.add_theme_font_size_override("font_size", 17)
+	_toast_sub.add_theme_color_override("font_color", Color(1, 1, 1, 0.70))
+	_toast_sub.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_toast_sub.visible = false
+	toast_vbox.add_child(_toast_sub)
+
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch and (event as InputEventScreenTouch).pressed and not touch_mode:
 		touch_mode = true
 		_joy.visible = true
 		_attack_btn.visible = true
+		_pack_btn.visible = true
 		_touch_hint.visible = true
 		_touch_hint_t = 6.0
 		_hint_label.visible = false
+		_refresh_prompt_visibility()
 
 
 func _process(delta: float) -> void:
@@ -227,6 +387,70 @@ func _process(delta: float) -> void:
 		var beat := pow(maxf(0.0, sin(_pulse_t * 5.2)), 3.0)
 		a = maxf(a, 0.10 + beat * 0.22)
 	_vignette.color = Color(0.70, 0.05, 0.05, a)
+	# Phase 3: work bar + toast timers.
+	if _work_t > 0.0:
+		_work_t = maxf(0.0, _work_t - delta)
+		var frac := 1.0 - _work_t / _work_dur
+		_work_fill.offset_right = -148.0 + 296.0 * clampf(frac, 0.0, 1.0)
+		if _work_t <= 0.0:
+			hide_work_bar()
+	if _toast_t > 0.0:
+		_toast_t -= delta
+		if _toast_t <= 0.0:
+			_toast.visible = false
+			_toast_sub.visible = false
+
+
+# --- Phase 3: interact prompt + USE button ---
+
+func show_interact_prompt(label: String) -> void:
+	if touch_mode:
+		_prompt_label.text = label
+	else:
+		_prompt_label.text = "F — " + label
+	_prompt_label.visible = true
+	_refresh_prompt_visibility()
+
+
+func hide_interact_prompt() -> void:
+	_prompt_label.visible = false
+	_refresh_prompt_visibility()
+
+
+func _refresh_prompt_visibility() -> void:
+	_use_btn.visible = touch_mode and _prompt_label.visible
+
+
+# --- Phase 3: work progress bar ---
+
+func show_work_bar(label: String, duration: float) -> void:
+	_work_label.text = label
+	_work_dur = maxf(0.05, duration)
+	_work_t = _work_dur
+	_work_fill.offset_right = -148.0
+	_work_label.visible = true
+	_work_bg.visible = true
+	_work_fill.visible = true
+
+
+func hide_work_bar() -> void:
+	_work_t = 0.0
+	_work_label.visible = false
+	_work_bg.visible = false
+	_work_fill.visible = false
+
+
+# --- Phase 3: sleep fade + teaser ---
+
+func fade_to_black(on: bool) -> void:
+	var tw := create_tween()
+	tw.tween_property(_fade, "color:a", 1.0 if on else 0.0, 0.6)
+
+
+func show_slept_teaser() -> void:
+	_toast.visible = true
+	_toast_sub.visible = true
+	_toast_t = 3.2
 
 
 func queue_attack() -> void:

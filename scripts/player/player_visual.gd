@@ -30,6 +30,13 @@ var _blink_t := 0.0
 var _target_yaw := 0.0
 var _head_base_y := 0.0
 
+# Phase 3: one-shot action overlays (kneel/search, pickup, eat, door push,
+# hurt flinch). Applied additively on top of the walk/idle pose each tick,
+# so the base animation is never disturbed.
+var _action := ""
+var _action_t := 0.0
+var _action_dur := 1.0
+
 # Materials (created once, shared across every part).
 var _m_jacket: StandardMaterial3D
 var _m_jacket_dark: StandardMaterial3D
@@ -75,6 +82,80 @@ func tick(delta: float, speed: float, moving: bool) -> void:
 		_idle_t = 0.0
 	else:
 		_idle(delta, k)
+	_apply_action(delta)
+
+
+func play_kneel(duration: float) -> void:
+	_start_action("kneel", duration)
+
+
+func play_pickup() -> void:
+	_start_action("pickup", 0.6)
+
+
+func play_eat() -> void:
+	_start_action("eat", 0.9)
+
+
+func play_door_push() -> void:
+	_start_action("door", 1.1)
+
+
+func play_hurt_flinch() -> void:
+	_start_action("hurt", 0.45)
+
+
+func _start_action(name: String, dur: float) -> void:
+	_action = name
+	_action_t = 0.0
+	_action_dur = dur
+
+
+func _apply_action(delta: float) -> void:
+	if _action == "":
+		return
+	_action_t += delta
+	var t := clampf(_action_t / _action_dur, 0.0, 1.0)
+	var e: float
+	if _action == "kneel":
+		# Ease in, hold through the search, ease out at the end.
+		e = smoothstep(0.0, 0.25, t) * (1.0 - smoothstep(0.8, 1.0, t))
+	else:
+		e = sin(t * PI) # smooth in/out one-shot
+	match _action:
+		"kneel":
+			_body.position.y -= 0.38 * e
+			_body.rotation.x += 0.18 * e
+			_leg_l.rotation.x -= 0.90 * e
+			_leg_r.rotation.x -= 0.90 * e
+			_shin_l.rotation.x += 1.40 * e
+			_shin_r.rotation.x += 1.40 * e
+			_arm_l.rotation.x -= 0.55 * e
+			_arm_r.rotation.x -= 0.55 * e
+		"pickup":
+			_body.rotation.x += 0.75 * e
+			_body.position.y -= 0.18 * e
+			_arm_l.rotation.x -= 0.90 * e
+			_arm_r.rotation.x -= 0.90 * e
+			_head.rotation.x += 0.35 * e
+		"eat":
+			_arm_r.rotation.x -= 1.35 * e
+			_fore_r.rotation.x -= 0.90 * e
+			_head.rotation.x += 0.18 * e
+		"door":
+			_arm_l.rotation.x -= 1.15 * e
+			_arm_r.rotation.x -= 1.15 * e
+			_body.rotation.x += 0.28 * e
+			_body.position.z = -0.12 * e
+		"hurt":
+			_body.rotation.z += 0.28 * e
+			_body.rotation.x -= 0.18 * e
+			_head.rotation.z += 0.30 * e
+			_arm_l.rotation.z += 0.50 * e
+			_arm_r.rotation.z -= 0.50 * e
+	if t >= 1.0:
+		_action = ""
+		_body.position.z = 0.0
 
 
 func _walk(delta: float, speed: float, k: float) -> void:

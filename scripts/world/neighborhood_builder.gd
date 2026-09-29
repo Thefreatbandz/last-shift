@@ -22,6 +22,11 @@ var _smoke_tex: ImageTexture
 # Tree canopy pivots for wind sway: each entry [Node3D, phase, amplitude].
 var _sway: Array = []
 
+# Phase 3: the boarded-up future safehouse exposes its planks (so claiming
+# can knock them down) and its door on a hinge pivot (so it can swing open).
+var safehouse_boards: Array[MeshInstance3D] = []
+var safehouse_door_pivot: Node3D
+
 # Static shared materials.
 var _m_roof: StandardMaterial3D
 var _m_chimney: StandardMaterial3D
@@ -296,7 +301,16 @@ func _house(pos: Vector3, face: float, w: float, d: float, wall: Color, boarded:
 	root.add_child(roof)
 	_box(root, Vector3(0.6, 1.2, 0.6), Vector3(w * 0.25, h + 1.3, d * 0.12), _m_chimney)
 	var fz := face * (d * 0.5 + 0.04)
-	_box(root, Vector3(1.1, 2.2, 0.12), Vector3(0, 1.1, fz), _m_door) # door
+	if boarded:
+		# Door on a hinge pivot (left edge) so Phase 3 can swing it open.
+		# Visually identical to the plain door below.
+		var pivot := Node3D.new()
+		pivot.position = Vector3(-0.55, 0, fz)
+		root.add_child(pivot)
+		_box(pivot, Vector3(1.1, 2.2, 0.12), Vector3(0.55, 1.1, 0), _m_door)
+		safehouse_door_pivot = pivot
+	else:
+		_box(root, Vector3(1.1, 2.2, 0.12), Vector3(0, 1.1, fz), _m_door) # door
 	_window(root, Vector3(-w * 0.28, 1.7, fz), face, false)
 	_window(root, Vector3(w * 0.28, 1.7, fz), face, false)
 	_window(root, Vector3(-w * 0.5 - 0.04, 1.7, 0.0), -1.0, true)
@@ -314,13 +328,16 @@ func _window(root: Node3D, pos: Vector3, face: float, side: bool) -> void:
 
 func _boards(root: Node3D, fz: float, w: float) -> void:
 	# Nailed planks across the door and front windows: the future safehouse.
+	# Door planks are tracked so Phase 3 can knock them down on claim.
 	for y in [0.8, 1.35, 1.9]:
 		var p := _box(root, Vector3(1.7, 0.22, 0.1), Vector3(0, y, fz + 0.10), _m_board)
 		p.rotation.z = 0.12 if int(y * 10.0) % 2 == 0 else -0.12
+		safehouse_boards.append(p)
 	for wx in [-w * 0.28, w * 0.28]:
 		for y in [1.45, 1.95]:
 			var p2 := _box(root, Vector3(1.6, 0.22, 0.1), Vector3(wx, y, fz + 0.10), _m_board)
 			p2.rotation.z = -0.18 if wx < 0.0 else 0.18
+			safehouse_boards.append(p2)
 
 
 func _build_houses() -> void:
