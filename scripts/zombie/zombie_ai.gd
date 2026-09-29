@@ -49,6 +49,14 @@ var _stuck_pos := Vector3.ZERO
 var _dead := false
 var _dead_t := 0.0
 
+# Audio: vocal cooldown, footstep distance, state-change tracking.
+var _vocal_t := 0.0
+var _idle_vocal_t := 0.0 # QA: idle groans so zombies are heard, not just seen
+var _snarl_t := 0.0
+var _step_dist := 0.0
+var _shuffle_alt := false
+var _prev_state: int = State.WANDER
+
 var _to := Vector3.ZERO
 var _dir := Vector3.ZERO
 
@@ -60,6 +68,7 @@ func _ready() -> void:
 	spawn_pos = global_position
 	_wander_target = global_position
 	_vis_t = randf() * 0.2
+	_idle_vocal_t = randf_range(2.0, 9.0) # stagger idle groans across the pack
 	_stuck_pos = global_position
 
 
@@ -122,6 +131,7 @@ func take_damage(amount: float, from_pos: Vector3) -> bool:
 func _die() -> void:
 	_dead = true
 	_dead_t = 1.1
+	Sound.play_3d("zombie_die", global_position)
 	$CollisionShape3D.disabled = true
 
 
@@ -138,6 +148,9 @@ func _physics_process(delta: float) -> void:
 		_vis_t = 0.15 + randf() * 0.1
 		_visible = _check_vision()
 	_attack_cd = maxf(0.0, _attack_cd - delta)
+	_vocal_t = maxf(0.0, _vocal_t - delta)
+	_snarl_t = maxf(0.0, _snarl_t - delta)
+	_update_idle_groan(delta)
 
 	match state:
 		State.WANDER:
@@ -151,6 +164,10 @@ func _physics_process(delta: float) -> void:
 		State.LOSE:
 			_do_lose(delta)
 
+	if state != _prev_state:
+		_on_state_changed(state)
+		_prev_state = state
+
 	velocity.y -= GRAVITY * delta
 	if is_on_floor() and velocity.y < 0.0:
 		velocity.y = -0.5
@@ -159,6 +176,49 @@ func _physics_process(delta: float) -> void:
 
 	var planar := Vector2(velocity.x, velocity.z).length()
 	visual.tick(delta, planar, planar > 0.3)
+	_update_footsteps(delta, planar)
+
+
+## Groan when the zombie notices something; snarls are handled at the lunge.
+func _on_state_changed(new_state: int) -> void:
+	if _vocal_t > 0.0:
+		return
+	if new_state == State.SUSPICIOUS or new_state == State.CHASE:
+		Sound.play_3d("groan%d" % randi_range(1, 4), global_position,
+			0.0, randf_range(0.92, 1.08), 30.0)
+		_vocal_t = 5.0
+
+
+## QA fix: zombies groan idly on a timer when the player is near — the
+## early-warning system. Before this they only vocalized on spotting the
+## player, so a quiet street sounded empty.
+func _update_idle_groan(delta: float) -> void:
+	if _dead:
+		return
+	_idle_vocal_t -= delta
+	if _idle_vocal_t > 0.0:
+		return
+	_idle_vocal_t = randf_range(7.0, 14.0)
+	if _vocal_t > 0.0 or player == null:
+		return
+	if player_health != null and player_health.is_dead():
+		return
+	if global_position.distance_to(player.global_position) > 20.0:
+		return
+	Sound.play_3d("groan%d" % randi_range(1, 4), global_position,
+		0.0, randf_range(0.85, 1.0), 30.0)
+	_vocal_t = 5.0
+
+
+func _update_footsteps(delta: float, planar: float) -> void:
+	if planar > 0.4 and is_on_floor():
+		_step_dist += planar * delta
+		if _step_dist >= 2.3:
+			_step_dist = 0.0
+			_shuffle_alt = not _shuffle_alt
+			Sound.play_3d("shuffle1" if _shuffle_alt else "shuffle2", global_position)
+	else:
+		_step_dist = 0.0
 
 
 func _update_night() -> void:
@@ -309,6 +369,9 @@ func _do_attack(delta: float) -> void:
 		_attack_cd = ATTACK_COOLDOWN
 		_attack_hit_t = 0.22
 		visual.play_lunge()
+		if _snarl_t <= 0.0:
+			Sound.play_3d("snarl", global_position, 0.0, randf_range(0.94, 1.06))
+			_snarl_t = 3.0
 	if _attack_hit_t > 0.0:
 		_attack_hit_t -= delta
 		if _attack_hit_t <= 0.0 and dist < ATTACK_RANGE * 1.25:

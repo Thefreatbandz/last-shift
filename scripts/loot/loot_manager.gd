@@ -51,12 +51,18 @@ func setup(p: PlayerController, visual: PlayerVisual, inv: Inventory,
 
 func _spawn_containers() -> void:
 	for s in SPOTS:
-		var c := LootContainer.new()
-		c.position = (s[0] as Vector3)
-		add_child(c)
-		c.build(s[1] as Array)
-		_containers.append(c)
-		_ids[c] = _interact.register(c, "SEARCH", SEARCH_RADIUS, _on_search.bind(c))
+		add_container(s[0] as Vector3, s[1] as Array)
+
+
+## QA pass: public so the bootstrap can add indoor containers (houses).
+func add_container(pos: Vector3, items: Array) -> LootContainer:
+	var c := LootContainer.new()
+	c.position = pos
+	add_child(c)
+	c.build(items)
+	_containers.append(c)
+	_ids[c] = _interact.register(c, "SEARCH", SEARCH_RADIUS, _on_search.bind(c))
+	return c
 
 
 func _on_search(c: LootContainer) -> void:
@@ -65,6 +71,7 @@ func _on_search(c: LootContainer) -> void:
 	_searching = true
 	_search_target = c
 	_search_t = SEARCH_TIME
+	Sound.play_3d("search", c.global_position)
 	_visual.play_kneel(SEARCH_TIME + 0.4)
 	_hud.show_work_bar("SEARCHING", SEARCH_TIME)
 

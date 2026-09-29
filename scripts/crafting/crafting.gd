@@ -72,5 +72,6 @@ func craft(id: String) -> bool:
 		"barricade":
 			safehouse.build_barricade()
 			_done[id] = true
+	Sound.play("craft") # workbench clank; main plays the success chime on `crafted`
 	crafted.emit(id)
 	return true

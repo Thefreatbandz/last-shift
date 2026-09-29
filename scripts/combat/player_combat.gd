@@ -136,6 +136,7 @@ func try_attack() -> void:
 	_cd = COOLDOWN
 	_swing_t = SWING_TIME
 	_hit_done = false
+	Sound.play("swoosh")
 	_noise.emit_noise(_player.global_position, MELEE_NOISE_RADIUS)
 
 
@@ -191,6 +192,7 @@ func _apply_hit() -> void:
 			continue
 		var died: bool = z.take_damage(DAMAGE + _damage_bonus, _player.global_position)
 		_blood.burst(z.global_position + Vector3(0, 1.25, 0))
+		Sound.play_3d("thwack", z.global_position)
 		hit_any = true
 		killed_any = killed_any or died
 	if hit_any:

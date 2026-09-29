@@ -27,6 +27,10 @@ var _sway: Array = []
 var safehouse_boards: Array[MeshInstance3D] = []
 var safehouse_door_pivot: Node3D
 
+# QA pass: every house is enterable. houses[] entries are Dictionaries:
+# {pos, w, d, face, roof (Node3D), door: {pivot, blocker, pos, open, safehouse}}
+var houses: Array = []
+
 # Static shared materials.
 var _m_roof: StandardMaterial3D
 var _m_chimney: StandardMaterial3D
@@ -181,6 +185,26 @@ func _solid(parent: Node3D, size: Vector3, pos: Vector3) -> StaticBody3D:
 	return sb
 
 
+## Wall / furniture block: visible box + matching collision in one node.
+func _solid_box(parent: Node3D, size: Vector3, pos: Vector3, mat: Material) -> StaticBody3D:
+	var sb := StaticBody3D.new()
+	sb.position = pos
+	var mi := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = size
+	mi.mesh = bm
+	if mat != null:
+		mi.material_override = mat
+	sb.add_child(mi)
+	var cs := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = size
+	cs.shape = shape
+	sb.add_child(cs)
+	parent.add_child(sb)
+	return sb
+
+
 func _tri(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, n: Vector3) -> void:
 	st.set_normal(n)
 	st.add_vertex(a)
@@ -260,10 +284,14 @@ func _build_ground() -> void:
 	mi.material_override = gm
 	add_child(mi)
 	# Simple static floor so the player always has ground collision.
+	# QA fix: a real thin box (two-sided) instead of a one-sided world
+	# boundary plane — nothing can ever tunnel below it and fall forever.
 	var sb := StaticBody3D.new()
 	var cs := CollisionShape3D.new()
-	var ws := WorldBoundaryShape3D.new()
-	cs.shape = ws
+	var bs := BoxShape3D.new()
+	bs.size = Vector3(MAP_HALF * 2.0 + 4.0, 1.0, MAP_HALF * 2.0 + 4.0)
+	cs.shape = bs
+	cs.position = Vector3(0, -0.52, 0) # top face sits at y = -0.02, under the visual plane
 	sb.add_child(cs)
 	add_child(sb)
 
@@ -289,35 +317,80 @@ func _build_roads() -> void:
 
 
 func _house(pos: Vector3, face: float, w: float, d: float, wall: Color, boarded: bool) -> void:
+	# QA pass: houses are enterable — four real walls (front wall has a door
+	# gap), a hinged door every house gets, a simple furnished interior, and
+	# a roof group that hides while the player is inside (camera would
+	# otherwise clip through it).
 	var root := Node3D.new()
 	root.position = pos
 	add_child(root)
 	var h := 3.2
-	_box(root, Vector3(w, h, d), Vector3(0, h * 0.5, 0), _std(wall))
+	var t := 0.3 # wall thickness
+	var wall_mat := _std(wall)
+	var fz := face * (d * 0.5) # front wall plane (local)
+	var door_w := 1.4
+	var door_h := 2.2
+	# Back wall + side walls (full).
+	_solid_box(root, Vector3(w, h, t), Vector3(0, h * 0.5, -face * d * 0.5), wall_mat)
+	_solid_box(root, Vector3(t, h, d), Vector3(-w * 0.5, h * 0.5, 0), wall_mat)
+	_solid_box(root, Vector3(t, h, d), Vector3(w * 0.5, h * 0.5, 0), wall_mat)
+	# Front wall: two segments leaving a door gap, plus a lintel above it.
+	var seg_w := (w - door_w) * 0.5
+	_solid_box(root, Vector3(seg_w, h, t),
+		Vector3(-(door_w * 0.5 + seg_w * 0.5), h * 0.5, fz), wall_mat)
+	_solid_box(root, Vector3(seg_w, h, t),
+		Vector3(door_w * 0.5 + seg_w * 0.5, h * 0.5, fz), wall_mat)
+	_solid_box(root, Vector3(door_w, h - door_h, t),
+		Vector3(0, door_h + (h - door_h) * 0.5, fz), wall_mat)
+	# Roof group (hidden while the player is inside).
+	var roof_g := Node3D.new()
+	root.add_child(roof_g)
 	var roof := MeshInstance3D.new()
 	roof.mesh = _prism_mesh(w * 0.5 + 0.5, 1.9, d + 1.0)
 	roof.position = Vector3(0, h, 0)
 	roof.material_override = _m_roof
-	root.add_child(roof)
-	_box(root, Vector3(0.6, 1.2, 0.6), Vector3(w * 0.25, h + 1.3, d * 0.12), _m_chimney)
-	var fz := face * (d * 0.5 + 0.04)
+	roof_g.add_child(roof)
+	_box(roof_g, Vector3(0.6, 1.2, 0.6), Vector3(w * 0.25, h + 1.3, d * 0.12), _m_chimney)
+	# Door on a hinge pivot (left edge) so it can swing open.
+	var pivot := Node3D.new()
+	pivot.position = Vector3(-door_w * 0.5, 0, fz)
+	root.add_child(pivot)
+	_box(pivot, Vector3(door_w, door_h, 0.12), Vector3(door_w * 0.5, door_h * 0.5, 0), _m_door)
+	# Doorway blocker: solid while the door is closed, disabled when open.
+	var blocker := _solid(root, Vector3(door_w, door_h, 0.24), Vector3(0, door_h * 0.5, fz))
+	_build_interior(root, w, d, face)
+	# Windows sit on the outer faces of the new walls.
+	var out_f := face * (d * 0.5 + t * 0.5 + 0.03)
+	_window(root, Vector3(-w * 0.28, 1.7, out_f), face, false)
+	_window(root, Vector3(w * 0.28, 1.7, out_f), face, false)
+	_window(root, Vector3(-w * 0.5 - t * 0.5 - 0.03, 1.7, 0.0), -1.0, true)
+	_window(root, Vector3(w * 0.5 + t * 0.5 + 0.03, 1.7, 0.0), 1.0, true)
 	if boarded:
-		# Door on a hinge pivot (left edge) so Phase 3 can swing it open.
-		# Visually identical to the plain door below.
-		var pivot := Node3D.new()
-		pivot.position = Vector3(-0.55, 0, fz)
-		root.add_child(pivot)
-		_box(pivot, Vector3(1.1, 2.2, 0.12), Vector3(0.55, 1.1, 0), _m_door)
+		_boards(root, fz + face * (t * 0.5 + 0.07), w)
 		safehouse_door_pivot = pivot
-	else:
-		_box(root, Vector3(1.1, 2.2, 0.12), Vector3(0, 1.1, fz), _m_door) # door
-	_window(root, Vector3(-w * 0.28, 1.7, fz), face, false)
-	_window(root, Vector3(w * 0.28, 1.7, fz), face, false)
-	_window(root, Vector3(-w * 0.5 - 0.04, 1.7, 0.0), -1.0, true)
-	_window(root, Vector3(w * 0.5 + 0.04, 1.7, 0.0), 1.0, true)
-	if boarded:
-		_boards(root, fz, w)
-	_solid(root, Vector3(w + 0.4, h + 2.2, d + 0.4), Vector3(0, (h + 2.2) * 0.5, 0))
+	var door := {
+		"pivot": pivot, "blocker": blocker,
+		"pos": pos + Vector3(0, 0, fz), "open": false, "safehouse": boarded,
+	}
+	houses.append({"pos": pos, "w": w, "d": d, "face": face, "roof": roof_g, "door": door})
+
+
+func _build_interior(root: Node3D, w: float, d: float, face: float) -> void:
+	# Cheap furnished interior: dark wood floor, couch + table + shelf.
+	# Kept clear of the door swing (door at local x in [-0.7, 0.7]).
+	var floor_mat := _std(Color(0.30, 0.23, 0.16))
+	_box(root, Vector3(w - 0.7, 0.06, d - 0.7), Vector3(0, 0.03, 0), floor_mat)
+	var couch_mat := _std(Color(0.32, 0.27, 0.23))
+	var table_mat := _std(Color(0.36, 0.28, 0.18))
+	var back := -face * (d * 0.5 - 1.0)
+	_solid_box(root, Vector3(2.0, 0.7, 0.9), Vector3(-w * 0.22, 0.35, back), couch_mat)
+	_solid_box(root, Vector3(2.0, 0.5, 0.25), Vector3(-w * 0.22, 0.95, back - face * 0.35), couch_mat)
+	_solid_box(root, Vector3(1.3, 0.12, 0.9), Vector3(w * 0.20, 0.68, back + face * 1.3), table_mat)
+	for sx in [-0.55, 0.55]:
+		for sz in [-0.35, 0.35]:
+			_box(root, Vector3(0.1, 0.62, 0.1),
+				Vector3(w * 0.20 + sx, 0.31, back + face * 1.3 + sz), table_mat)
+	_solid_box(root, Vector3(0.5, 2.0, 1.6), Vector3(w * 0.5 - 0.55, 1.0, 0), table_mat)
 
 
 func _window(root: Node3D, pos: Vector3, face: float, side: bool) -> void:

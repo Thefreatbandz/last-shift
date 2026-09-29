@@ -32,6 +32,7 @@ func heal(amount: float) -> void:
 		return
 	hp = minf(MAX_HP, hp + amount)
 	_hud.set_health(hp, MAX_HP)
+	Sound.set_heartbeat(hp < 30.0)
 
 
 func is_dead() -> bool:
@@ -47,10 +48,15 @@ func damage(amount: float) -> void:
 	(_player.get_node("Visual") as PlayerVisual).play_hurt_flinch()
 	if hp <= 0.0:
 		_die()
+	else:
+		Sound.play("hurt")
+	Sound.set_heartbeat(hp < 30.0 and hp > 0.0)
 
 
 func _die() -> void:
 	_dead = true
+	Sound.play("death")
+	Sound.set_heartbeat(false)
 	_hud.show_death()
 
 
@@ -64,3 +70,4 @@ func respawn() -> void:
 	_zombies.reset_all()
 	_hud.set_health(hp, MAX_HP)
 	_hud.hide_death()
+	Sound.set_heartbeat(false)

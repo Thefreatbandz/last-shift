@@ -43,6 +43,7 @@ func use(id: String) -> bool:
 	if not remove(id, 1):
 		return false
 	health.heal(float(LootDefs.item_heal(id)))
+	Sound.play("eat")
 	return true
 
 

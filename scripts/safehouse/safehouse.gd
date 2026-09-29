@@ -33,6 +33,9 @@ var _bench: Node3D
 var _chest: Node3D
 var _bedroll: Node3D
 
+# QA pass: set by the bootstrap (HouseDoors). Claim swings the door through it.
+var doors: HouseDoors
+
 static var _m_trim: StandardMaterial3D
 static var _m_tag: StandardMaterial3D
 static var _m_fabric: StandardMaterial3D
@@ -90,6 +93,19 @@ func _box(parent: Node3D, size: Vector3, pos: Vector3, mat: Material) -> MeshIns
 	return mi
 
 
+## QA fix: props get real collision so the player can't walk through them
+## (and can't get wedged into a bad physics state against them).
+func _solid(parent: Node3D, size: Vector3, pos: Vector3) -> void:
+	var sb := StaticBody3D.new()
+	sb.position = pos
+	var cs := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = size
+	cs.shape = shape
+	sb.add_child(cs)
+	parent.add_child(sb)
+
+
 func _build_props() -> void:
 	_props = Node3D.new()
 	add_child(_props)
@@ -103,12 +119,14 @@ func _build_props() -> void:
 			_box(_bench, Vector3(0.1, 0.92, 0.1), Vector3(sx, 0.46, sz), _m_trim)
 	_box(_bench, Vector3(0.5, 0.12, 0.3), Vector3(-0.3, 1.04, 0), _m_iron) # tools
 	_box(_bench, Vector3(0.3, 0.2, 0.25), Vector3(0.35, 1.08, 0.05), _m_fabric)
+	_solid(_bench, Vector3(1.5, 1.1, 0.75), Vector3(0, 0.55, 0))
 	# --- Stash chest (right of the door). ---
 	_chest = Node3D.new()
 	_chest.position = Vector3(2.4, 0, 1.4)
 	_props.add_child(_chest)
 	_box(_chest, Vector3(0.95, 0.5, 0.6), Vector3(0, 0.25, 0), _m_trim)
 	_box(_chest, Vector3(0.95, 0.12, 0.6), Vector3(0, 0.56, 0), _m_iron)
+	_solid(_chest, Vector3(0.95, 0.68, 0.6), Vector3(0, 0.34, 0))
 	# --- Bedroll (porch center, out of the walkway). ---
 	_bedroll = Node3D.new()
 	_bedroll.position = Vector3(0.4, 0, 3.6)
@@ -125,12 +143,14 @@ func _build_props() -> void:
 	roll.material_override = _m_fabric
 	_bedroll.add_child(roll)
 	_box(_bedroll, Vector3(0.35, 0.14, 0.4), Vector3(-0.75, 0.14, 0), _m_trim) # pillow
+	_solid(_bedroll, Vector3(1.8, 0.5, 0.7), Vector3(0, 0.25, 0))
 
 
 func claim() -> void:
 	if claimed:
 		return
 	claimed = true
+	Sound.play_3d("door", DOOR_POS) # old hinges as the boards start to fall
 	_visual.play_door_push()
 	_interact.set_enabled(_claim_id, false)
 	# Boards clatter to the ground, staggered.
@@ -157,13 +177,20 @@ func claim() -> void:
 	tag_tw.tween_interval(1.0)
 	tag_tw.tween_property(tag, "scale", Vector3.ONE, 0.4)\
 		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	# Door swings open on its hinge pivot.
-	var pivot := _hood.safehouse_door_pivot
-	if is_instance_valid(pivot):
+	# Door swings open on its hinge pivot (owned by HouseDoors now).
+	if doors != null:
+		var di := doors.safehouse_door_index()
+		# Delay matches the old claim beat: boards fall first, then the door.
 		var dtw := create_tween()
 		dtw.tween_interval(0.9)
-		dtw.tween_property(pivot, "rotation:y", -1.85, 1.0)\
-			.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		dtw.tween_callback(doors.set_door_open.bind(di, true, true))
+	else:
+		var pivot := _hood.safehouse_door_pivot
+		if is_instance_valid(pivot):
+			var dtw := create_tween()
+			dtw.tween_interval(0.9)
+			dtw.tween_property(pivot, "rotation:y", -1.85, 1.0)\
+				.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 	# Porch props pop in, then their prompts go live.
 	var ptw := create_tween()
 	ptw.tween_interval(1.2)
@@ -233,4 +260,5 @@ func build_barricade() -> void:
 	for s in segs:
 		var m := _box(_props, s[1] as Vector3, s[0] as Vector3, wall_mat)
 		m.rotation.y = float(s[2])
+		_solid(_props, s[1] as Vector3, s[0] as Vector3) # barricades block, not just decor
 	_zombies.set_ward(PORCH, 13.0)

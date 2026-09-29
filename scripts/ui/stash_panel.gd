@@ -71,12 +71,14 @@ func open() -> void:
 	_open = true
 	visible = true
 	_refresh()
+	Sound.play("inv_open")
 	toggled.emit(true)
 
 
 func close_panel() -> void:
 	_open = false
 	visible = false
+	Sound.play("inv_close")
 	toggled.emit(false)
 
 

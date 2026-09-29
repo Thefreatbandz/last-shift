@@ -13,6 +13,10 @@ extends CharacterBody3D
 var camera_rig: CameraRig
 var hud: Hud
 
+# Footstep audio: distance-based, alternating variants.
+var _step_dist := 0.0
+var _step_alt := false
+
 @onready var visual: PlayerVisual = $Visual
 
 
@@ -50,3 +54,18 @@ func _physics_process(delta: float) -> void:
 	if planar > 0.6 and wish != Vector3.ZERO:
 		visual.set_target_yaw(atan2(-wish.x, -wish.z))
 	visual.tick(delta, planar, planar > 0.4)
+	_update_footsteps(delta, planar)
+
+
+func _update_footsteps(delta: float, planar: float) -> void:
+	if planar > 0.6 and is_on_floor():
+		_step_dist += planar * delta
+		# QA fix: cadence scales with speed (walk ~1.9 steps/s, sprint ~3.2).
+		# The old fixed 2.4 m threshold made walk steps comically sparse —
+		# thuds disconnected from the leg animation ("weird" running sound).
+		if _step_dist >= 1.1 + planar * 0.16:
+			_step_dist = 0.0
+			_step_alt = not _step_alt
+			Sound.play("step1" if _step_alt else "step2", 0.0, randf_range(0.94, 1.06))
+	else:
+		_step_dist = 0.0

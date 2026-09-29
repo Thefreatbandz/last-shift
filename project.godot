@@ -28,3 +28,7 @@ lights_and_shadows/directional_shadow/size=2048
 lights_and_shadows/directional_shadow/size.mobile=1024
 environment/defaults/default_clear_color=Color(0.01, 0.015, 0.03, 1)
 
+
+[autoload]
+
+Sound="*res://scripts/audio/audio_manager.gd"
