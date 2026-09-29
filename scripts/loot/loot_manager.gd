@@ -70,6 +70,11 @@ func container_count() -> int:
 	return _containers.size()
 
 
+## Minimap: read-only access to containers (position + searched state).
+func get_containers() -> Array[LootContainer]:
+	return _containers
+
+
 func _on_search(c: LootContainer) -> void:
 	if _searching or c.searched:
 		return

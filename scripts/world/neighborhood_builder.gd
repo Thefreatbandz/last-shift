@@ -1287,3 +1287,12 @@ func _build_boundary() -> void:
 	_solid(self, Vector3(160, 6, 1), Vector3(0, 3, h))
 	_solid(self, Vector3(1, 6, 160), Vector3(-h, 3, 0))
 	_solid(self, Vector3(1, 6, 160), Vector3(h, 3, 0))
+
+
+## Minimap: road + gas-station footprints for the map (seeded layout data).
+func get_road_rects() -> Array[Rect2]:
+	return _road_rects
+
+
+func get_gas_rect() -> Rect2:
+	return _gas_rect

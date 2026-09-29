@@ -725,3 +725,8 @@ func hide_death() -> void:
 func set_clock(day: int, hour: int, minute: int) -> void:
 	_day_label.text = "DAY %d" % day
 	_clock_label.text = "%02d:%02d" % [hour, minute]
+
+
+## Minimap: attach the corner map widget (hides with the rest of the HUD).
+func attach_minimap(view: Control) -> void:
+	_hud_root.add_child(view)

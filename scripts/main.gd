@@ -17,6 +17,7 @@ extends Node3D
 
 var _inv_panel: InventoryPanel
 var _safehouse: Safehouse
+var _minimap_view: MinimapView
 var _run_started := false
 var _paused := false
 var _test_frames := -1 # --quit-after=N (headless QA)
@@ -177,6 +178,17 @@ func _start_run(seed: int) -> void:
 
 	safehouse.set_panels(craft_panel, stash_panel)
 
+	# Minimap: fog-of-war neighborhood map (corner widget + M/tap overlay).
+	var mmap := MinimapModel.new()
+	mmap.name = "Minimap"
+	add_child(mmap)
+	mmap.setup(player, visual, neighborhood, zombies, loot, safehouse)
+	_minimap_view = MinimapView.new()
+	_minimap_view.name = "MinimapView"
+	_minimap_view.setup(mmap)
+	_minimap_view.tapped.connect(combat.suppress_attack.bind(0.2))
+	hud.attach_minimap(_minimap_view)
+
 	hud.interact_pressed.connect(interact.try_interact)
 	hud.backpack_pressed.connect(_inv_panel.toggle)
 	hud.menu_pressed.connect(_on_menu_button)
@@ -192,6 +204,9 @@ func _start_run(seed: int) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("inventory") and _inv_panel != null and not _paused:
 		_inv_panel.toggle()
+	if event.is_action_pressed("map") and _run_started and not _paused \
+			and _minimap_view != null:
+		_minimap_view.toggle_expanded()
 	if event.is_action_pressed("menu") and _run_started:
 		if _paused:
 			_on_continue()
