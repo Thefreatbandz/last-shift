@@ -13,13 +13,16 @@ extends Node3D
 ## interiors, detailed cars, faceted trees, skyline) are reused as-is —
 ## only the geography varies per seed.
 
-const MAP_HALF := 74.0
+const MAP_HALF := 100.0 # playable half-extent (m); world is 200x200m
 
 var _rng := RandomNumberGenerator.new()
 # Visual-only RNG: seeded from the world seed but independent, so purely
 # cosmetic detail (road wear, broken windows, clutter) can never shift the
 # shared _rng sequence that determines gameplay layouts.
 var _vrng := RandomNumberGenerator.new()
+# Loot RNG: seeded from the world seed but independent, so outdoor loot
+# variety/placement never shifts the layout RNG stream either.
+var _lrng := RandomNumberGenerator.new()
 var _time := 0.0
 var world_seed := -1 # the seed this neighborhood was built from (-1 = unbuilt)
 
@@ -47,6 +50,8 @@ var houses: Array = []
 #  safehouse, locked}, kind, name}
 var buildings: Array = []
 var building_loot: Array = [] # dicts {pos: Vector3, items: Array}
+var outdoor_loot: Array = [] # dicts {pos: Vector3, kind: String, items: Array}
+const OUTDOOR_LOOT_COUNT := 18 # trash 5, corpses 4, toolbox 2, firstaid 2, duffel 2, crate 3
 var brute_spawns: Array[Vector3] = [] # interior Brute spawn points
 var building_zombie_spawns: Array[Vector3] = [] # interior Walker spawn points
 var _building_specs: Array = [] # seeded commercial lots: {kind, pos, face, w, d, h}
@@ -136,6 +141,7 @@ var _m_counter: StandardMaterial3D
 var _m_bed: StandardMaterial3D
 var _m_bedding: StandardMaterial3D
 var _m_rust_patch: StandardMaterial3D
+var _m_brushwall: StandardMaterial3D # dense dark undergrowth: the visible map edge
 var _m_grime: StandardMaterial3D # dark weather grime at wall bases
 
 
@@ -154,6 +160,7 @@ func build_world(seed: int) -> void:
 	world_seed = seed
 	_rng.seed = seed
 	_vrng.seed = seed ^ 0x9E3779B9
+	_lrng.seed = seed ^ 0xC10C41
 	_layout_roads()
 	_layout_gas_station()
 	_layout_house_lots() # lots first: grass/debris/scatter can reject them
@@ -175,6 +182,7 @@ func build_world(seed: int) -> void:
 	_build_boundary()
 	_layout_safehouse_info() # sets player_start / safehouse_porch
 	_layout_zombie_spawns()
+	_layout_outdoor_loot() # seeded container variety, own RNG stream
 
 
 func _clear_world() -> void:
@@ -187,6 +195,7 @@ func _clear_world() -> void:
 	zombie_spawns.clear()
 	buildings.clear()
 	building_loot.clear()
+	outdoor_loot.clear()
 	brute_spawns.clear()
 	building_zombie_spawns.clear()
 	_building_specs.clear()
@@ -224,8 +233,8 @@ func _layout_gas_station() -> void:
 	# Pushed well clear of the house bands so lots rarely compete with it.
 	var qx := 1.0 if _rng.randf() < 0.5 else -1.0
 	var qz := 1.0 if _rng.randf() < 0.5 else -1.0
-	var gx := clampf(road_ns_x + qx * 34.0, -54.0, 54.0)
-	var gz := clampf(road_ew_z + qz * 30.0, -54.0, 54.0)
+	var gx := clampf(road_ns_x + qx * 46.0, -78.0, 78.0)
+	var gz := clampf(road_ew_z + qz * 42.0, -78.0, 78.0)
 	_gas_pos = Vector3(gx, 0, gz)
 	_gas_rect = Rect2(gx - 11.0, gz - 9.0, 22.0, 18.0)
 
@@ -265,17 +274,17 @@ func _curb_spot(visual: bool = false) -> Vector3:
 	var r := _vrng if visual else _rng
 	if r.randf() < 0.5:
 		var s := 1.0 if r.randf() < 0.5 else -1.0
-		return Vector3(r.randf_range(-64, 64), 0,
+		return Vector3(r.randf_range(-92, 92), 0,
 			road_ew_z + s * r.randf_range(6.3, 7.3))
 	var s2 := 1.0 if r.randf() < 0.5 else -1.0
 	return Vector3(road_ns_x + s2 * r.randf_range(6.3, 7.3), 0,
-		r.randf_range(-64, 64))
+		r.randf_range(-92, 92))
 
 
 func _open_spot(margin := 1.0) -> Vector3:
 	# Rejection-sampled open ground: not on roads, lots, or the gas station.
 	for _i in 200:
-		var p := Vector3(_rng.randf_range(-62, 62), 0, _rng.randf_range(-62, 62))
+		var p := Vector3(_rng.randf_range(-90, 90), 0, _rng.randf_range(-90, 90))
 		if _on_road(p, margin) or _point_in_lots(p, margin):
 			continue
 		return p
@@ -287,7 +296,7 @@ func _open_spot_visual(margin := 1.0) -> Vector3:
 	# the cosmetic RNG so decorative scatter (fences) never shifts the
 	# layout RNG sequence (zombie spawns, loot) or the layout hash.
 	for _i in 200:
-		var p := Vector3(_vrng.randf_range(-62, 62), 0, _vrng.randf_range(-62, 62))
+		var p := Vector3(_vrng.randf_range(-90, 90), 0, _vrng.randf_range(-90, 90))
 		if _on_road(p, margin) or _point_in_lots(p, margin):
 			continue
 		return p
@@ -295,11 +304,12 @@ func _open_spot_visual(margin := 1.0) -> Vector3:
 
 
 func _layout_zombie_spawns() -> void:
-	# Six scatter points: open ground, away from the player start and the
-	# safehouse porch, spread apart.
+	# Ten scatter points on the expanded map (same density as the old six):
+	# open ground, away from the player start and the safehouse porch,
+	# spread apart.
 	zombie_spawns.clear()
 	var tries := 0
-	while zombie_spawns.size() < 6 and tries < 400:
+	while zombie_spawns.size() < 10 and tries < 600:
 		tries += 1
 		var p := _open_spot(2.0)
 		p.y = 0.3
@@ -315,6 +325,159 @@ func _layout_zombie_spawns() -> void:
 		if not ok:
 			continue
 		zombie_spawns.append(p)
+
+
+## Seeded outdoor loot variety (Phase 2): distinct container types placed
+## "in the right places" — corpses near building entrances and the road
+## cross where the fighting happened, trash scattered on open ground,
+## toolboxes at the warehouse/gas station, first-aid near houses, duffels
+## dropped by roadsides, crates behind commercial buildings. Always
+## produces exactly OUTDOOR_LOOT_COUNT spots (fallbacks included).
+func _layout_outdoor_loot() -> void:
+	outdoor_loot.clear()
+	var plan := [
+		["trash", 5], ["corpse", 2], ["fresh_corpse", 2], ["toolbox", 2],
+		["firstaid", 2], ["duffel", 2], ["crate", 3],
+	]
+	for entry in plan:
+		var kind := String(entry[0])
+		for _i in int(entry[1]):
+			var p := _loot_spot_for(kind)
+			outdoor_loot.append({"pos": p, "kind": kind,
+				"items": _loot_table(kind)})
+
+
+func _loot_open_spot(margin := 1.0) -> Vector3:
+	# Rejection-sampled open ground through the loot RNG (never touches
+	# the layout stream).
+	for _i in 200:
+		var p := Vector3(_lrng.randf_range(-90, 90), 0,
+			_lrng.randf_range(-90, 90))
+		if _on_road(p, margin) or _point_in_lots(p, margin):
+			continue
+		if p.distance_to(player_start) < 6.0:
+			continue
+		return p
+	return Vector3(road_ns_x + 12.0, 0, road_ew_z + 12.0) # near the cross
+
+
+func _loot_spot_for(kind: String) -> Vector3:
+	match kind:
+		"corpse", "fresh_corpse":
+			# Where the fighting happened: building entrances, or the road
+			# intersection. Uses _building_specs (layout-phase data).
+			if not _building_specs.is_empty() and _lrng.randf() < 0.7:
+				var spec := _building_specs[_lrng.randi() % _building_specs.size()] as Dictionary
+				var bp := spec["pos"] as Vector3
+				var face := float(spec["face"])
+				var d := float(spec["d"])
+				var p := bp + Vector3(_lrng.randf_range(-3.0, 3.0), 0,
+					face * (d * 0.5 + _lrng.randf_range(1.5, 3.5)))
+				if not _on_road(p, 0.5) and not _point_in_lots(p, 0.5):
+					return p
+			# Fallback: near the road cross.
+			for _i in 60:
+				var p2 := Vector3(
+					road_ns_x + _lrng.randf_range(-14.0, 14.0), 0,
+					road_ew_z + _lrng.randf_range(-14.0, 14.0))
+				if _on_road(p2, 2.5) or _point_in_lots(p2, 0.5):
+					continue
+				return p2
+			return _loot_open_spot()
+		"toolbox":
+			# Warehouses and the gas station: tools live where work happened.
+			for spec in _building_specs:
+				var sd := spec as Dictionary
+				if String(sd["kind"]) == "warehouse":
+					var wp := sd["pos"] as Vector3
+					var p := wp + Vector3(_lrng.randf_range(-4.0, 4.0), 0,
+						float(sd["face"]) * (float(sd["d"]) * 0.5 + 2.0))
+					if not _on_road(p, 0.5) and not _point_in_lots(p, 0.5):
+						return p
+			if _gas_rect.has_area():
+				var gp := Vector3(_gas_pos.x + _lrng.randf_range(-6.0, 6.0), 0,
+					_gas_pos.z + _lrng.randf_range(-4.0, 4.0))
+				if not _on_road(gp, 0.5) and not _point_in_lots(gp, 0.5):
+					return gp
+			return _loot_open_spot()
+		"firstaid":
+			# Front yards: medicine cabinets raided, kits dropped outside.
+			if not _lot_specs.is_empty():
+				var spec := _lot_specs[_lrng.randi() % _lot_specs.size()] as Dictionary
+				var hp := spec["pos"] as Vector3
+				var face := float(spec["face"])
+				var p := hp + Vector3(_lrng.randf_range(-3.0, 3.0), 0,
+					face * (float(spec["d"]) * 0.5 + _lrng.randf_range(2.0, 4.0)))
+				if not _on_road(p, 0.5) and not _point_in_lots(p, 0.5):
+					return p
+			return _loot_open_spot()
+		"duffel":
+			# Dropped by the roadside: someone ran and didn't make it.
+			for _i in 60:
+				var p := _curb_spot_loot()
+				if _on_road(p, 1.0) or _point_in_lots(p, 0.5):
+					continue
+				return p
+			return _loot_open_spot()
+		_: # "trash", "crate": scattered open ground
+			return _loot_open_spot()
+
+
+func _curb_spot_loot() -> Vector3:
+	# Loot-RNG twin of _curb_spot: just off a road edge.
+	if _lrng.randf() < 0.5:
+		var s := 1.0 if _lrng.randf() < 0.5 else -1.0
+		return Vector3(_lrng.randf_range(-90, 90), 0,
+			road_ew_z + s * _lrng.randf_range(8.0, 10.0))
+	var s2 := 1.0 if _lrng.randf() < 0.5 else -1.0
+	return Vector3(road_ns_x + s2 * _lrng.randf_range(8.0, 10.0), 0,
+		_lrng.randf_range(-90, 90))
+
+
+## Fitting loot tables per container kind. No new item types (parked) —
+## just sensible mixes of the existing economy.
+func _loot_table(kind: String) -> Array:
+	match kind:
+		"trash":
+			var t: Array = [["scrap", _lrng.randi_range(1, 2)]]
+			if _lrng.randf() < 0.4:
+				t.append(["cloth", 1])
+			if _lrng.randf() < 0.25:
+				t.append(["canned_food", 1])
+			return t
+		"corpse":
+			var t: Array = [["cloth", _lrng.randi_range(1, 2)]]
+			if _lrng.randf() < 0.5:
+				t.append(["scrap", 1])
+			if _lrng.randf() < 0.3:
+				t.append(["bandage", 1])
+			return t
+		"fresh_corpse":
+			var t: Array = [["bandage", 1]]
+			if _lrng.randf() < 0.45:
+				t.append(["medkit", 1])
+			if _lrng.randf() < 0.35:
+				t.append(["canned_food", 1])
+			if _lrng.randf() < 0.3:
+				t.append(["water", 1])
+			return t
+		"toolbox":
+			var t: Array = [["scrap", _lrng.randi_range(2, 3)]]
+			if _lrng.randf() < 0.4:
+				t.append(["cloth", 1])
+			return t
+		"firstaid":
+			var t: Array = [["bandage", _lrng.randi_range(1, 2)]]
+			if _lrng.randf() < 0.5:
+				t.append(["medkit", 1])
+			return t
+		"duffel":
+			var t: Array = [["canned_food", 1], ["water", 1]]
+			if _lrng.randf() < 0.5:
+				t.append(["cloth", 1])
+			return t
+		_: # "crate"
+			return [["scrap", 2], ["cloth", 1]]
 
 
 func _layout_safehouse_info() -> void:
@@ -458,8 +621,8 @@ func bx_register(entry: Dictionary) -> void:
 	buildings.append(entry)
 
 
-func bx_add_loot(pos: Vector3, items: Array) -> void:
-	building_loot.append({"pos": pos, "items": items})
+func bx_add_loot(pos: Vector3, items: Array, kind := "crate") -> void:
+	building_loot.append({"pos": pos, "items": items, "kind": kind})
 
 
 func bx_brute(pos: Vector3) -> void:
@@ -572,6 +735,7 @@ func _make_materials() -> void:
 	_m_bed = _std(Color(0.32, 0.24, 0.16), 0.85) # bed frame
 	_m_bedding = _std(Color(0.50, 0.46, 0.40), 0.95) # mattress + blanket
 	_m_rust_patch = _std(Color(0.36, 0.20, 0.10), 1.0) # rust patches
+	_m_brushwall = _std(Color(0.10, 0.14, 0.08), 1.0) # dense dark undergrowth: the visible map edge
 	_m_grime = _std(Color(0.070, 0.063, 0.055), 1.0) # V2: heavy grime at wall bases
 
 	_m_headlight = StandardMaterial3D.new()
@@ -828,9 +992,9 @@ func _build_grass_tufts() -> void:
 	tuft.material = _m_tuft
 	var xf: Array[Transform3D] = []
 	var tries := 0
-	while xf.size() < 220 and tries < 1200:
+	while xf.size() < 320 and tries < 1800:
 		tries += 1
-		var p := Vector3(_rng.randf_range(-70, 70), 0.19, _rng.randf_range(-70, 70))
+		var p := Vector3(_rng.randf_range(-96, 96), 0.19, _rng.randf_range(-96, 96))
 		if not _on_grass_ok(p):
 			continue
 		var s := _rng.randf_range(0.7, 1.5)
@@ -854,9 +1018,9 @@ func _build_debris() -> void:
 	patch.material = _m_debris
 	var xf: Array[Transform3D] = []
 	var tries := 0
-	while xf.size() < 90 and tries < 600:
+	while xf.size() < 130 and tries < 900:
 		tries += 1
-		var p := Vector3(_rng.randf_range(-68, 68), 0.012, _rng.randf_range(-68, 68))
+		var p := Vector3(_rng.randf_range(-94, 94), 0.012, _rng.randf_range(-94, 94))
 		var near_road := absf(absf(p.z - road_ew_z) - 7.5) < 2.5 \
 			or absf(absf(p.x - road_ns_x) - 7.5) < 2.5
 		if not near_road:
@@ -922,13 +1086,13 @@ func _build_sidewalk_joints(ez: float, nx: float) -> void:
 	var xf: Array[Transform3D] = []
 	var cols: Array[Color] = []
 	# Sidewalk seams across both walks.
-	for x in range(-66, 67, 6):
+	for x in range(-96, 97, 6):
 		for sz in [ez - 5.0, ez + 5.0]:
 			xf.append(Transform3D(
 				Basis(Vector3.UP, 0.0).scaled(Vector3(0.09, 1, 2.0)),
 				Vector3(x + _vrng.randf_range(-0.4, 0.4), 0.008, sz)))
 			cols.append(Color(1, 1, 1))
-	for z in range(-66, 67, 6):
+	for z in range(-96, 97, 6):
 		if absf(z - ez) < 8.0:
 			continue
 		for sx in [nx - 6.0, nx + 6.0]:
@@ -937,10 +1101,10 @@ func _build_sidewalk_joints(ez: float, nx: float) -> void:
 				Vector3(sx, 0.008, z + _vrng.randf_range(-0.4, 0.4))))
 			cols.append(Color(1, 1, 1))
 	# Asphalt cracks: jagged dark slashes wandering across the lanes.
-	for _i in 34:
+	for _i in 48:
 		var on_ew := _vrng.randf() < 0.6
-		var px := _vrng.randf_range(-64.0, 64.0) if on_ew else nx + _vrng.randf_range(-3.2, 3.2)
-		var pz := ez + _vrng.randf_range(-3.2, 3.2) if on_ew else _vrng.randf_range(-64.0, 64.0)
+		var px := _vrng.randf_range(-92.0, 92.0) if on_ew else nx + _vrng.randf_range(-3.2, 3.2)
+		var pz := ez + _vrng.randf_range(-3.2, 3.2) if on_ew else _vrng.randf_range(-92.0, 92.0)
 		var segs := _vrng.randi_range(2, 4)
 		var dir := _vrng.randf() * TAU
 		for _s in segs:
@@ -954,10 +1118,10 @@ func _build_sidewalk_joints(ez: float, nx: float) -> void:
 			pz += sin(dir) * ln * 0.8
 			dir += _vrng.randf_range(-0.7, 0.7)
 	# Tar repair patches: big dark rectangles over the worst of it.
-	for _i in 12:
+	for _i in 18:
 		var on_ew2 := _vrng.randf() < 0.6
-		var qx := _vrng.randf_range(-64.0, 64.0) if on_ew2 else nx + _vrng.randf_range(-3.0, 3.0)
-		var qz := ez + _vrng.randf_range(-3.0, 3.0) if on_ew2 else _vrng.randf_range(-64.0, 64.0)
+		var qx := _vrng.randf_range(-92.0, 92.0) if on_ew2 else nx + _vrng.randf_range(-3.0, 3.0)
+		var qz := ez + _vrng.randf_range(-3.0, 3.0) if on_ew2 else _vrng.randf_range(-92.0, 92.0)
 		xf.append(Transform3D(
 			Basis(Vector3.UP, _vrng.randf() * TAU).scaled(
 				Vector3(_vrng.randf_range(1.2, 2.6), 1, _vrng.randf_range(0.9, 1.8))),
@@ -983,16 +1147,16 @@ func _build_road_detail() -> void:
 	# chewed up.
 	var ez := road_ew_z
 	var nx := road_ns_x
-	for _i in 20:
+	for _i in 28:
 		var on_ew := _vrng.randf() < 0.6
 		var px: float
 		var pz: float
 		if on_ew:
-			px = _vrng.randf_range(-66.0, 66.0)
+			px = _vrng.randf_range(-94.0, 94.0)
 			pz = ez + _vrng.randf_range(-3.0, 3.0)
 		else:
 			px = nx + _vrng.randf_range(-3.0, 3.0)
-			pz = _vrng.randf_range(-66.0, 66.0)
+			pz = _vrng.randf_range(-94.0, 94.0)
 		if _vrng.randf() < 0.5:
 			# Pothole: dark sunken disc.
 			var r := _vrng.randf_range(0.35, 0.7)
@@ -1434,16 +1598,16 @@ func _boards(root: Node3D, fz: float, w: float) -> void:
 ## of roads, the gas station and each other, and face the EW road. Runs
 ## before ground scatter so grass/debris reject house footprints.
 func _layout_house_lots() -> void:
-	var target := _rng.randi_range(7, 9)
+	var target := _rng.randi_range(12, 14)
 	var tries := 0
-	while _lot_specs.size() < target and tries < 400:
+	while _lot_specs.size() < target and tries < 500:
 		tries += 1
 		var side := 1.0 if _rng.randf() < 0.5 else -1.0
-		var hx := _rng.randf_range(-58.0, 34.0)
+		var hx := _rng.randf_range(-86.0, 86.0)
 		if absf(hx - road_ns_x) < 11.0: # keep the intersection clear
 			continue
 		var hz: float = road_ew_z + side * _rng.randf_range(15.0, 23.0)
-		if absf(hz) > 60.0:
+		if absf(hz) > 92.0:
 			continue
 		var w := _rng.randf_range(6.8, 8.6)
 		var d := _rng.randf_range(6.2, 7.6)
@@ -1455,15 +1619,15 @@ func _layout_house_lots() -> void:
 	# Ironclad guarantee: the map is mostly empty, so a coarse grid scan
 	# always finds room to reach the target count.
 	if _lot_specs.size() < target:
-		var bx := -60.0
-		while bx <= 48.0 and _lot_specs.size() < target:
+		var bx := -86.0
+		while bx <= 86.0 and _lot_specs.size() < target:
 			for side in [1.0, -1.0]:
 				if _lot_specs.size() >= target:
 					break
 				if absf(bx - road_ns_x) < 12.0:
 					continue
 				var hz: float = road_ew_z + side * 19.0
-				if absf(hz) > 60.0:
+				if absf(hz) > 92.0:
 					continue
 				var rect := Rect2(bx - 7.3, hz - 6.8, 14.6, 13.6)
 				if not _lot_free(rect):
@@ -1515,15 +1679,15 @@ func _build_houses() -> void:
 func _build_streetlights() -> void:
 	# Seeded: lamps march along both roads, alternating sides.
 	var spots: Array[Vector3] = []
-	var x := -60.0
+	var x := -86.0
 	var side := 1.0
-	while x < 44.0:
+	while x < 86.0:
 		spots.append(Vector3(x, 0, road_ew_z + side * 5.6))
 		x += _rng.randf_range(18.0, 26.0)
 		side = -side
-	var z := -52.0
+	var z := -80.0
 	var side2 := 1.0
-	while z < 56.0:
+	while z < 86.0:
 		spots.append(Vector3(road_ns_x + side2 * 5.6, 0, z))
 		z += _rng.randf_range(24.0, 34.0)
 		side2 = -side2
@@ -1568,9 +1732,9 @@ func _build_trees() -> void:
 	# Seeded scatter: trees on open ground, bushes in front of houses.
 	var placed := 0
 	var tries := 0
-	while placed < 14 and tries < 300:
+	while placed < 20 and tries < 400:
 		tries += 1
-		var p := Vector3(_rng.randf_range(-64, 64), 0, _rng.randf_range(-64, 64))
+		var p := Vector3(_rng.randf_range(-90, 90), 0, _rng.randf_range(-90, 90))
 		if _on_road(p, 3.0) or _point_in_lots(p, 3.0):
 			continue
 		_tree(p, _rng.randf_range(0.85, 1.25))
@@ -1721,10 +1885,10 @@ func _build_treeline() -> void:
 	var l_xf: Array[Transform3D] = []
 	var u_xf: Array[Transform3D] = []
 	var cols: Array[Color] = []
-	var n := 84
+	var n := 124
 	for i in n:
 		var a := TAU * float(i) / float(n) + _vrng.randf_range(-0.05, 0.05)
-		var r := _vrng.randf_range(60.0, 66.0)
+		var r := _vrng.randf_range(88.0, 96.0)
 		var p := Vector3(cos(a) * r, 0, sin(a) * r)
 		if _on_road(p, 4.5):
 			continue # the roads run out into the forest, not through trees
@@ -1812,7 +1976,7 @@ func _build_cars() -> void:
 		Color(0.52, 0.48, 0.38), # beige
 		Color(0.17, 0.23, 0.33), # dark blue
 	]
-	var n := _rng.randi_range(4, 6)
+	var n := _rng.randi_range(6, 9)
 	var smoking_idx := _rng.randi() % n
 	var placed: Array[Vector3] = []
 	for i in n:
@@ -1822,14 +1986,14 @@ func _build_cars() -> void:
 		var found := false
 		for _t in 40:
 			if _rng.randf() < 0.6:
-				var cx := _rng.randf_range(-60.0, 40.0)
+				var cx := _rng.randf_range(-86.0, 80.0)
 				if absf(cx - road_ns_x) < 8.0: # keep the intersection clear
 					continue
 				var cz := road_ew_z + (2.2 if _rng.randf() < 0.5 else -2.2)
 				rot = _rng.randf_range(-0.15, 0.15) + (0.0 if cz > road_ew_z else PI)
 				cp = Vector3(cx, 0, cz)
 			else:
-				var nz := _rng.randf_range(-56.0, 56.0)
+				var nz := _rng.randf_range(-86.0, 86.0)
 				if absf(nz - road_ew_z) < 8.0:
 					continue
 				var nx2 := road_ns_x + (2.2 if _rng.randf() < 0.5 else -2.2)
@@ -2076,25 +2240,58 @@ func _build_silhouettes() -> void:
 	add_child(root)
 	for i in 18:
 		var a := TAU * float(i) / 18.0 + _rng.randf_range(-0.1, 0.1)
-		var r := _rng.randf_range(88.0, 108.0)
+		var r := _rng.randf_range(118.0, 148.0)
 		var bw := _rng.randf_range(8.0, 18.0)
 		var bh := _rng.randf_range(9.0, 26.0)
 		var p := Vector3(cos(a) * r, bh * 0.5 - 0.5, sin(a) * r)
 		_box(root, Vector3(bw, bh, bw * 0.7), p, _m_silhouette, _rng.randf() * TAU)
 	for i in 12:
 		var a2 := TAU * float(i) / 12.0 + 0.26 + _rng.randf_range(-0.12, 0.12)
-		var r2 := _rng.randf_range(82.0, 96.0)
+		var r2 := _rng.randf_range(112.0, 130.0)
 		var th := _rng.randf_range(6.0, 11.0)
 		var tp := Vector3(cos(a2) * r2, th * 0.5, sin(a2) * r2)
 		_cyl(root, 0.05, 2.6, th, tp, _m_silhouette)
 
 
 func _build_boundary() -> void:
+	# Hard collision walls (invisible) + a VISIBLE overgrown barrier just
+	# inside them: dense dark brush the player can see, so the map edge
+	# reads as "impenetrable forest" instead of a magic wall. Fallen logs
+	# and bush clumps (cosmetic _vrng) break up the silhouette.
 	var h := MAP_HALF + 0.5
-	_solid(self, Vector3(160, 6, 1), Vector3(0, 3, -h))
-	_solid(self, Vector3(160, 6, 1), Vector3(0, 3, h))
-	_solid(self, Vector3(1, 6, 160), Vector3(-h, 3, 0))
-	_solid(self, Vector3(1, 6, 160), Vector3(h, 3, 0))
+	var w := MAP_HALF * 2.0 + 16.0
+	_solid(self, Vector3(w, 6, 1), Vector3(0, 3, -h))
+	_solid(self, Vector3(w, 6, 1), Vector3(0, 3, h))
+	_solid(self, Vector3(1, 6, w), Vector3(-h, 3, 0))
+	_solid(self, Vector3(1, 6, w), Vector3(h, 3, 0))
+	var bh := MAP_HALF - 1.2
+	var bw := MAP_HALF * 2.0 - 2.0
+	var root := Node3D.new()
+	root.name = "EdgeBrush"
+	add_child(root)
+	# Four long brush walls (visual only — collision comes from the walls
+	# 1.7m behind them, so the player stops right at the greenery).
+	_box(root, Vector3(bw, 3.4, 2.6), Vector3(0, 1.7, -bh), _m_brushwall)
+	_box(root, Vector3(bw, 3.4, 2.6), Vector3(0, 1.7, bh), _m_brushwall)
+	_box(root, Vector3(2.6, 3.4, bw), Vector3(-bh, 1.7, 0), _m_brushwall)
+	_box(root, Vector3(2.6, 3.4, bw), Vector3(bh, 1.7, 0), _m_brushwall)
+	# Ragged top: bush clumps + fallen logs along the barrier (cosmetic).
+	var per := int(bw / 4.0)
+	for i in per:
+		var t := -bw * 0.5 + float(i) * 4.0 + _vrng.randf_range(-1.5, 1.5)
+		for sz in [-1.0, 1.0]:
+			var bp := Vector3(t, 0, sz * (bh + _vrng.randf_range(-1.2, 1.2)))
+			var bush := _sphere(root, _vrng.randf_range(1.1, 1.9), bp + Vector3(0, 2.6, 0), _m_brushwall, true)
+			bush.scale.y = 0.8
+			if _vrng.randf() < 0.4:
+				var logm := _box(root, Vector3(_vrng.randf_range(2.0, 3.6), 0.5, 0.5),
+					Vector3(t + _vrng.randf_range(-1.0, 1.0), 0.35, sz * (bh - 2.6)), _m_trunk_dark,
+					_vrng.randf() * TAU)
+				logm.rotation.z = _vrng.randf_range(-0.12, 0.12)
+		for sx in [-1.0, 1.0]:
+			var bp2 := Vector3(sx * (bh + _vrng.randf_range(-1.2, 1.2)), 0, t)
+			var bush2 := _sphere(root, _vrng.randf_range(1.1, 1.9), bp2 + Vector3(0, 2.6, 0), _m_brushwall, true)
+			bush2.scale.y = 0.8
 
 
 ## Minimap: road + gas-station footprints for the map (seeded layout data).

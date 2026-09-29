@@ -1,12 +1,12 @@
 class_name ZombieManager
 extends Node3D
-## Phase 2: owns the walker pack. Spawns 6 zombies scattered around the
-## neighborhood (away from the player start), routes NoiseBus pulses to
+## Phase 2: owns the walker pack. Spawns PACK_SIZE zombies scattered around
+## the neighborhood (away from the player start), routes NoiseBus pulses to
 ## them, applies cheap pairwise separation, drives the night eye-glow, and
 ## resets the pack when the player respawns.
 
 const ZOMBIE_SCENE := preload("res://scenes/zombie/zombie.tscn")
-const PACK_SIZE := 6
+const PACK_SIZE := 10 # scaled with the expanded map (was 6 on the old map)
 const SEPARATION_DIST := 1.6
 
 # Scatter points: supplied by the seeded neighborhood — open ground, away

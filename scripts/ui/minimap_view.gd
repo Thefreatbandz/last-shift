@@ -68,6 +68,6 @@ func _draw() -> void:
 	var rect := Rect2(Vector2.ZERO, size)
 	MapDraw.draw_panel(self, rect)
 	var c := rect.get_center()
-	var px := (minf(size.x, size.y) * 0.5 - 14.0) / 74.0
+	var px := (minf(size.x, size.y) * 0.5 - 14.0) / NeighborhoodBuilder.MAP_HALF
 	MapDraw.draw_world(self, _model, c, px)
 	MapDraw.draw_north(self, Vector2(c.x, 4.0))

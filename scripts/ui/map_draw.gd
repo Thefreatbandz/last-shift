@@ -147,7 +147,7 @@ static func draw_expanded(canvas: Control, m: MinimapModel) -> void:
 	var panel := Rect2((size.x - side) * 0.5, 84.0, side, side)
 	draw_panel(canvas, panel)
 	var c := panel.get_center()
-	var px := (side * 0.5 - 26.0) / 74.0
+	var px := (side * 0.5 - 26.0) / NeighborhoodBuilder.MAP_HALF
 	draw_world(canvas, m, c, px)
 	draw_north(canvas, Vector2(c.x, panel.position.y + 4.0))
 	canvas.draw_string(f, Vector2(30, 54), "NEIGHBORHOOD %d" % m.seed,

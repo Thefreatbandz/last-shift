@@ -106,8 +106,8 @@ func layout_lots(hood: NeighborhoodBuilder, kinds: Array) -> Array:
 func _place_lot(hood: NeighborhoodBuilder, rng: RandomNumberGenerator,
 		kind: String, dim: Vector3) -> Dictionary:
 	for _attempt in 90:
-		var x := rng.randf_range(-56.0, 56.0)
-		var z := rng.randf_range(-56.0, 56.0)
+		var x := rng.randf_range(-86.0, 86.0)
+		var z := rng.randf_range(-86.0, 86.0)
 		var p := Vector3(x, 0, z)
 		var m := maxf(dim.x, dim.z) * 0.5 + 3.0
 		if hood.bx_on_road(p, m + 4.0):
@@ -510,7 +510,7 @@ func _build_hospital(hood: NeighborhoodBuilder, spec: Dictionary) -> Dictionary:
 			Vector3(sx, 1.7, sz + fd * 0.2), crossm)
 		var items := [["medicine", 2], ["bandage", 1]] if csi == 0 \
 			else [["medicine", 1], ["bandage", 2]]
-		hood.bx_add_loot(root.position + Vector3(sx, 0.6, sz + fd * 0.9), items)
+		hood.bx_add_loot(root.position + Vector3(sx, 0.6, sz + fd * 0.9), items, "firstaid")
 	hood.bx_add_loot(root.position + Vector3(2.8, 0.6, cz + fd * 0.9),
 		[["cloth", 2], ["scrap", 1]])
 	# The wards are overrun: regular zombies inside.
@@ -671,7 +671,7 @@ func _build_office_tall(hood: NeighborhoodBuilder, spec: Dictionary) -> Dictiona
 			rng.randf_range(0.0, 1.2)))
 	# Crafting supplies / scrap + a little food.
 	hood.bx_add_loot(root.position + Vector3(-w * 0.28, 0.6, bd * 0.6),
-		[["scrap", 2], ["cloth", 1]])
+		[["scrap", 2], ["cloth", 1]], "duffel")
 	hood.bx_add_loot(root.position + Vector3(w * 0.28, 0.6, bd * 0.6),
 		[["water", 1], ["canned_food", 1]])
 	# One office worker still at their desk.
@@ -814,7 +814,7 @@ func _build_warehouse(hood: NeighborhoodBuilder, spec: Dictionary) -> Dictionary
 				Vector3(cx + 0.1, 1.4, cz), wood)) # second crate
 	# Scrap-heavy loot; one worker that never clocked out.
 	hood.bx_add_loot(root.position + Vector3(-3.0, 0.6, bd * 1.8),
-		[["scrap", 3], ["cloth", 1]])
+		[["scrap", 3], ["cloth", 1]], "toolbox")
 	hood.bx_add_loot(root.position + Vector3(3.0, 0.6, bd * 2.2),
 		[["scrap", 2], ["canned_food", 1]])
 	hood.bx_zombie(root.position + Vector3(rng.randf_range(-3.0, 3.0), 0.3, 0.0))

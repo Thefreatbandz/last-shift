@@ -5,8 +5,8 @@ extends Node
 ## `updated`. North-up: world -Z is up, +X is right.
 
 const CELL := 2.0 # fog cell size, meters
-const HALF := 74.0 # must match NeighborhoodBuilder.MAP_HALF
-const GRID := 74 # cells per side (covers the full 148m map)
+const HALF := NeighborhoodBuilder.MAP_HALF # must match the world builder
+const GRID := int(2.0 * HALF / CELL) # cells per side (covers the full map)
 const REVEAL_RADIUS := 12.0
 const ZOMBIE_RANGE := 25.0
 const TICK := 0.1

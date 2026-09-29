@@ -142,7 +142,7 @@ func _start_run(seed: int) -> void:
 	var loot := LootManager.new()
 	loot.name = "Loot"
 	add_child(loot)
-	loot.setup(player, visual, inventory, interact, hud)
+	loot.setup(player, visual, inventory, interact, hud, neighborhood.outdoor_loot)
 
 	var safehouse := Safehouse.new()
 	safehouse.name = "Safehouse"
@@ -180,7 +180,7 @@ func _start_run(seed: int) -> void:
 	# Building types: seeded interior loot containers per building.
 	for bl in neighborhood.building_loot:
 		var bd := bl as Dictionary
-		loot.add_container(bd["pos"], bd["items"])
+		loot.add_container(bd["pos"], bd["items"], String(bd.get("kind", "crate")))
 
 	var crafting := Crafting.new()
 	crafting.name = "Crafting"

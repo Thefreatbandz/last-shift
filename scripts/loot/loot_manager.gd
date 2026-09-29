@@ -11,20 +11,8 @@ signal loot_granted(items: Array)
 const SEARCH_TIME := 1.5
 const SEARCH_RADIUS := 2.6
 
-# [position, [[item_id, count], ...]] — curated, deterministic.
-const SPOTS := [
-	[Vector3(-44, 0, -14.5), [["scrap", 2], ["cloth", 1]]],
-	[Vector3(-24, 0, -15.5), [["canned_food", 1], ["water", 1]]],
-	[Vector3(-36, 0, 14.5), [["medkit", 1]]],
-	[Vector3(-12, 0, 15.5), [["canned_food", 1], ["cloth", 1]]],
-	[Vector3(14, 0, 14.5), [["water", 2], ["scrap", 1]]],
-	[Vector3(-54, 0, 3.0), [["scrap", 3]]],
-	[Vector3(-10, 0, 4.6), [["scrap", 2], ["cloth", 1]]],
-	[Vector3(20, 0, 19.4), [["medkit", 1], ["water", 1]]],
-	[Vector3(-45, 0, -7.0), [["canned_food", 1], ["scrap", 2]]],
-	[Vector3(-46, 0, -25.5), [["cloth", 3]]],
-	[Vector3(44, 0, -27.5), [["canned_food", 2], ["water", 1]]],
-]
+# Outdoor container count is seeded by NeighborhoodBuilder (outdoor_loot):
+# 18 spots — trash 5, corpses 4, toolbox 2, first-aid 2, duffel 2, crate 3.
 
 var _player: PlayerController
 var _visual: PlayerVisual
@@ -40,28 +28,32 @@ var _search_target: LootContainer
 
 
 func setup(p: PlayerController, visual: PlayerVisual, inv: Inventory,
-		interact: InteractManager, hud: Hud) -> void:
+		interact: InteractManager, hud: Hud, outdoor_spots: Array) -> void:
 	_player = p
 	_visual = visual
 	_inventory = inv
 	_interact = interact
 	_hud = hud
-	_spawn_containers()
+	_spawn_containers(outdoor_spots)
 
 
-func _spawn_containers() -> void:
-	for s in SPOTS:
-		add_container(s[0] as Vector3, s[1] as Array)
+func _spawn_containers(outdoor_spots: Array) -> void:
+	# Seeded outdoor variety from the world builder: {pos, kind, items}.
+	for s in outdoor_spots:
+		var sd := s as Dictionary
+		add_container(sd["pos"] as Vector3, sd["items"] as Array,
+			String(sd.get("kind", "crate")))
 
 
 ## QA pass: public so the bootstrap can add indoor containers (houses).
-func add_container(pos: Vector3, items: Array) -> LootContainer:
+func add_container(pos: Vector3, items: Array, kind := "crate") -> LootContainer:
 	var c := LootContainer.new()
 	c.position = pos
 	add_child(c)
-	c.build(items)
+	c.build(items, kind)
 	_containers.append(c)
-	_ids[c] = _interact.register(c, "SEARCH", SEARCH_RADIUS, _on_search.bind(c))
+	_ids[c] = _interact.register(c, LootContainer.prompt_for(kind),
+		SEARCH_RADIUS, _on_search.bind(c))
 	return c
 
 
