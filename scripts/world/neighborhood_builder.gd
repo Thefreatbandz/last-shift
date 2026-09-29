@@ -580,6 +580,19 @@ func _make_materials() -> void:
 
 # ------------------------------------------------------------------ helpers ---
 
+## Tag a node as interior furniture. The interior_furniture_qa suite collects
+## every node with this meta under a house/building root and asserts its
+## world AABB stays inside that building's footprint.
+func _furn(n: Node) -> Node:
+	n.set_meta("furniture", true)
+	return n
+
+
+## Public wrapper so BuildingTypes can tag its furniture without a cast.
+func bx_furn(n: Node) -> Node:
+	return _furn(n)
+
+
 func _box(parent: Node3D, size: Vector3, pos: Vector3, mat: Material, rot_y := 0.0) -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
 	var bm := BoxMesh.new()
@@ -1007,7 +1020,7 @@ func _house(pos: Vector3, face: float, w: float, d: float, wall: Color, roof_c: 
 		"pivot": pivot, "blocker": blocker, "veil": veil,
 		"pos": pos + Vector3(0, 0, fz), "open": false, "safehouse": false,
 	}
-	houses.append({"pos": pos, "w": w, "d": d, "face": face, "roof": roof_g, "door": door})
+	houses.append({"pos": pos, "w": w, "d": d, "face": face, "roof": roof_g, "door": door, "root": root})
 
 
 ## Boards up one house as the safehouse: planks across the door and front
@@ -1035,25 +1048,25 @@ func _build_interior(root: Node3D, w: float, d: float, face: float) -> void:
 	var back := -face * (d * 0.5 - 1.2)
 	# Couch: base, back, arms, two cushions — against the back wall, right of the loot corner.
 	var cx := w * 0.18
-	_solid_box(root, Vector3(2.1, 0.55, 0.95), Vector3(cx, 0.32, back), _m_couch)
-	_solid_box(root, Vector3(2.1, 0.75, 0.28), Vector3(cx, 0.65, back - face * 0.42), _m_couch)
+	_furn(_solid_box(root, Vector3(2.1, 0.55, 0.95), Vector3(cx, 0.32, back), _m_couch))
+	_furn(_solid_box(root, Vector3(2.1, 0.75, 0.28), Vector3(cx, 0.65, back - face * 0.42), _m_couch))
 	for ax in [-1.0, 1.0]:
-		_solid_box(root, Vector3(0.28, 0.85, 0.95), Vector3(cx + ax, 0.48, back), _m_couch)
-	_box(root, Vector3(0.82, 0.16, 0.8), Vector3(cx - 0.46, 0.66, back + face * 0.05), _m_cushion)
-	_box(root, Vector3(0.82, 0.16, 0.8), Vector3(cx + 0.46, 0.66, back + face * 0.05), _m_cushion)
+		_furn(_solid_box(root, Vector3(0.28, 0.85, 0.95), Vector3(cx + ax, 0.48, back), _m_couch))
+	_furn(_box(root, Vector3(0.82, 0.16, 0.8), Vector3(cx - 0.46, 0.66, back + face * 0.05), _m_cushion))
+	_furn(_box(root, Vector3(0.82, 0.16, 0.8), Vector3(cx + 0.46, 0.66, back + face * 0.05), _m_cushion))
 	# Coffee table with lower shelf; slab sides instead of four legs.
 	var tx := w * 0.18
 	var tz := back + face * 1.9
-	_box(root, Vector3(1.4, 0.1, 0.8), Vector3(tx, 0.62, tz), _m_table)
-	_box(root, Vector3(1.2, 0.06, 0.6), Vector3(tx, 0.22, tz), _m_shelf)
+	_furn(_box(root, Vector3(1.4, 0.1, 0.8), Vector3(tx, 0.62, tz), _m_table))
+	_furn(_box(root, Vector3(1.2, 0.06, 0.6), Vector3(tx, 0.22, tz), _m_shelf))
 	for sx in [-0.6, 0.6]:
-		_box(root, Vector3(0.09, 0.57, 0.7), Vector3(tx + sx, 0.31, tz), _m_table)
-	_solid(root, Vector3(1.4, 0.65, 0.8), Vector3(tx, 0.33, tz))
+		_furn(_box(root, Vector3(0.09, 0.57, 0.7), Vector3(tx + sx, 0.31, tz), _m_table))
+	_furn(_solid(root, Vector3(1.4, 0.65, 0.8), Vector3(tx, 0.33, tz)))
 	# Rug: layered flat boxes in the middle of the room.
-	_box(root, Vector3(2.8, 0.035, 2.0), Vector3(0.9, 0.08, -face * 0.6), _m_rug)
+	_furn(_box(root, Vector3(2.8, 0.035, 2.0), Vector3(0.9, 0.08, -face * 0.6), _m_rug))
 	# Bookshelf on the right wall with book spines.
 	var shx := w * 0.5 - 0.65
-	_solid_box(root, Vector3(0.45, 2.0, 1.7), Vector3(shx, 1.0, 0.2), _m_shelf)
+	_furn(_solid_box(root, Vector3(0.45, 2.0, 1.7), Vector3(shx, 1.0, 0.2), _m_shelf))
 	for sy in [0.55, 1.05, 1.55]:
 		_box(root, Vector3(0.4, 0.05, 1.6), Vector3(shx - 0.02, sy, 0.2), _m_trim)
 		var bx := -0.6
@@ -1071,7 +1084,7 @@ func _build_interior(root: Node3D, w: float, d: float, face: float) -> void:
 	var lz := -face * (d * 0.5 - 1.0)
 	_cyl(root, 0.035, 0.05, 1.6, Vector3(lx, 0.80, lz), _m_pole)
 	_cyl(root, 0.22, 0.30, 0.34, Vector3(lx, 1.75, lz), _window_lit_mat)
-	_solid(root, Vector3(0.35, 1.9, 0.35), Vector3(lx, 0.95, lz))
+	_furn(_solid(root, Vector3(0.35, 1.9, 0.35), Vector3(lx, 0.95, lz)))
 	# Framed picture above the couch, on the back inner wall.
 	var pic_z := -face * (d * 0.5 - 0.30)
 	_box(root, Vector3(0.5, 0.62, 0.05), Vector3(cx, 2.05, pic_z), _m_picture)
@@ -1082,12 +1095,12 @@ func _build_interior(root: Node3D, w: float, d: float, face: float) -> void:
 			Vector3(wx + 0.95, 1.65, fz_in), _m_curtain)
 	# Kitchen counter along the left wall.
 	var kx := -(w * 0.5 - 0.55)
-	_solid_box(root, Vector3(0.62, 0.90, 2.2), Vector3(kx, 0.45, 0.6), _m_counter)
+	_furn(_solid_box(root, Vector3(0.62, 0.90, 2.2), Vector3(kx, 0.45, 0.6), _m_counter))
 	_box(root, Vector3(0.66, 0.06, 2.26), Vector3(kx, 0.93, 0.6), _m_trim)
 	# Bed in the back-left corner: frame, mattress, pillow.
 	var bedx := -(w * 0.5 - 1.35)
 	var bedz := -face * (d * 0.5 - 1.75)
-	_solid_box(root, Vector3(1.7, 0.32, 1.15), Vector3(bedx, 0.22, bedz), _m_bed)
+	_furn(_solid_box(root, Vector3(1.7, 0.32, 1.15), Vector3(bedx, 0.22, bedz), _m_bed))
 	_box(root, Vector3(1.6, 0.18, 1.05), Vector3(bedx, 0.47, bedz), _m_bedding)
 	_box(root, Vector3(0.45, 0.12, 0.7), Vector3(bedx - 0.5, 0.60, bedz), _m_cushion)
 

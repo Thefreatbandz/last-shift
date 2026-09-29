@@ -1,10 +1,10 @@
 class_name Safehouse
 extends Node3D
 ## Phase 3: the boarded-up house becomes claimable. Claim it at the door:
-## boards fall, your mark goes up, the door swings open, and the porch
-## comes alive (workbench, stash chest, bedroll). Bedroll sleeps until
-## morning ("While You Slept" teaser — full world-sim arrives later).
-## Claiming also moves the respawn point here.
+## boards fall, your mark goes up, the door swings open, and the safehouse
+## interior comes alive (workbench, stash chest, bedroll — all INSIDE the
+## house now). Bedroll sleeps until morning ("While You Slept" teaser —
+## full world-sim arrives later). Claiming also moves the respawn point here.
 
 signal claimed_house
 signal slept
@@ -31,7 +31,8 @@ var _stash_panel: StashPanel
 var _claim_id := -1
 var _sleeping := false
 var survival: SurvivalStats # set by main; sleep costs hunger/thirst
-var _props: Node3D
+var _props: Node3D # porch props (Safehouse-local; +Z is the porch side)
+var _inprops: Node3D # interior props, parented to the safehouse's house root
 var _bench: Node3D
 var _chest: Node3D
 var _bedroll: Node3D
@@ -118,10 +119,23 @@ func _solid(parent: Node3D, size: Vector3, pos: Vector3) -> void:
 func _build_props() -> void:
 	_props = Node3D.new()
 	add_child(_props)
-	# --- Workbench (left of the door). ---
+	# The workbench / stash / bedroll live INSIDE the safehouse. They parent
+	# to the safehouse's house root in house-local coordinates: local -Z is
+	# inside (the Safehouse node's own +Z is the porch side, which is why the
+	# old porch placements put them on the lawn).
+	_inprops = Node3D.new()
+	_inprops.visible = false
+	var h := _hood.houses[_hood.safehouse_index] as Dictionary
+	var hroot := h["root"] as Node3D
+	hroot.add_child(_inprops)
+	var w := float(h["w"])
+	var d := float(h["d"])
+	var face := float(h["face"])
+	# --- Workbench: front-right corner, clear of the door swing. ---
 	_bench = Node3D.new()
-	_bench.position = Vector3(-2.4, 0, 1.4)
-	_props.add_child(_bench)
+	_bench.position = Vector3(w * 0.5 - 1.35, 0, face * (d * 0.5 - 1.55))
+	_bench.set_meta("furniture", true)
+	_inprops.add_child(_bench)
 	_box(_bench, Vector3(1.5, 0.12, 0.75), Vector3(0, 0.92, 0), _m_trim)
 	for sx in [-0.65, 0.65]:
 		for sz in [-0.3, 0.3]:
@@ -129,17 +143,19 @@ func _build_props() -> void:
 	_box(_bench, Vector3(0.5, 0.12, 0.3), Vector3(-0.3, 1.04, 0), _m_iron) # tools
 	_box(_bench, Vector3(0.3, 0.2, 0.25), Vector3(0.35, 1.08, 0.05), _m_fabric)
 	_solid(_bench, Vector3(1.5, 1.1, 0.75), Vector3(0, 0.55, 0))
-	# --- Stash chest (right of the door). ---
+	# --- Stash chest: in front of the workbench, against the front wall. ---
 	_chest = Node3D.new()
-	_chest.position = Vector3(2.4, 0, 1.4)
-	_props.add_child(_chest)
+	_chest.position = Vector3(w * 0.5 - 1.35, 0, face * (d * 0.5 - 0.75))
+	_chest.set_meta("furniture", true)
+	_inprops.add_child(_chest)
 	_box(_chest, Vector3(0.95, 0.5, 0.6), Vector3(0, 0.25, 0), _m_trim)
 	_box(_chest, Vector3(0.95, 0.12, 0.6), Vector3(0, 0.56, 0), _m_iron)
 	_solid(_chest, Vector3(0.95, 0.68, 0.6), Vector3(0, 0.34, 0))
-	# --- Bedroll (porch center, out of the walkway). ---
+	# --- Bedroll: mid-room on the left, clear of the bed and the door path. ---
 	_bedroll = Node3D.new()
-	_bedroll.position = Vector3(0.4, 0, 3.6)
-	_props.add_child(_bedroll)
+	_bedroll.position = Vector3(-1.4, 0, -face * 0.1)
+	_bedroll.set_meta("furniture", true)
+	_inprops.add_child(_bedroll)
 	var roll := MeshInstance3D.new()
 	var cm := CylinderMesh.new()
 	cm.top_radius = 0.28
@@ -200,7 +216,7 @@ func claim() -> void:
 			dtw.tween_interval(0.9)
 			dtw.tween_property(pivot, "rotation:y", -1.85, 1.0)\
 				.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-	# Porch props pop in, then their prompts go live.
+	# Safehouse props (porch + interior) pop in, then their prompts go live.
 	var ptw := create_tween()
 	ptw.tween_interval(1.2)
 	ptw.tween_callback(_reveal_props)
@@ -213,6 +229,12 @@ func _reveal_props() -> void:
 	_props.scale = Vector3(0.01, 0.01, 0.01)
 	var tw := create_tween()
 	tw.tween_property(_props, "scale", Vector3.ONE, 0.35)\
+		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	# Interior trio pops in with the porch props.
+	_inprops.visible = true
+	_inprops.scale = Vector3(0.01, 0.01, 0.01)
+	var itw := create_tween()
+	itw.tween_property(_inprops, "scale", Vector3.ONE, 0.35)\
 		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	_interact.register(_bench, "USE WORKBENCH", 2.8, open_crafting)
 	_interact.register(_chest, "OPEN STASH", 2.8, open_stash)

@@ -268,6 +268,7 @@ func _desk(hood: NeighborhoodBuilder, root: Node3D, pos: Vector3,
 	g.position = pos
 	g.rotation.y = rot_y
 	root.add_child(g)
+	hood.bx_furn(g)
 	var wood: Material = hood.bx_mat("wood")
 	var dark: Material = hood.bx_mat("table")
 	hood.bx_box(g, Vector3(1.6, 0.08, 0.8), Vector3(0, 0.74, 0), wood)
@@ -286,6 +287,7 @@ func _shelf_unit(hood: NeighborhoodBuilder, root: Node3D, pos: Vector3,
 	g.position = pos
 	g.rotation.y = rot_y
 	root.add_child(g)
+	hood.bx_furn(g)
 	var sm: Material = hood.bx_mat("shelf")
 	hood.bx_solid_box(g, Vector3(2.6, 1.7, 0.7), Vector3(0, 0.85, 0), sm)
 	hood.bx_box(g, Vector3(2.6, 1.7, 0.08), Vector3(0, 0.85, 0), sm)
@@ -310,6 +312,7 @@ func _bed(hood: NeighborhoodBuilder, root: Node3D, pos: Vector3,
 	g.position = pos
 	g.rotation.y = rot_y
 	root.add_child(g)
+	hood.bx_furn(g)
 	hood.bx_solid_box(g, Vector3(1.0, 0.35, 2.1), Vector3(0, 0.35, 0),
 		hood.bx_mat("bed"))
 	hood.bx_box(g, Vector3(0.9, 0.18, 1.9), Vector3(0, 0.60, 0),
@@ -328,8 +331,8 @@ func _cell(hood: NeighborhoodBuilder, root: Node3D, cx: float, cz: float,
 	var bar := hood.bx_std(Color(0.18, 0.18, 0.20), 0.5, 0.6)
 	var wallm := hood.bx_std(Color(0.45, 0.46, 0.48), 0.9)
 	var t := 0.15
-	hood.bx_solid_box(root, Vector3(t, 2.4, cd), Vector3(cx - cw * 0.5, 1.2, cz), wallm)
-	hood.bx_solid_box(root, Vector3(t, 2.4, cd), Vector3(cx + cw * 0.5, 1.2, cz), wallm)
+	hood.bx_furn(hood.bx_solid_box(root, Vector3(t, 2.4, cd), Vector3(cx - cw * 0.5, 1.2, cz), wallm))
+	hood.bx_furn(hood.bx_solid_box(root, Vector3(t, 2.4, cd), Vector3(cx + cw * 0.5, 1.2, cz), wallm))
 	var fz := cz + face_dir * cd * 0.5
 	var n := 6
 	for i in n + 1:
@@ -382,16 +385,16 @@ func _build_police(hood: NeighborhoodBuilder, spec: Dictionary) -> Dictionary:
 	# Front desk counter + a desk behind it (seeded x offset).
 	var dx := rng.randf_range(-2.0, 2.0)
 	var dz := fd * (d * 0.5 - 3.0)
-	hood.bx_solid_box(root, Vector3(3.0, 1.0, 0.8), Vector3(dx, 0.5, dz),
-		hood.bx_mat("counter"))
+	hood.bx_furn(hood.bx_solid_box(root, Vector3(3.0, 1.0, 0.8), Vector3(dx, 0.5, dz),
+		hood.bx_mat("counter")))
 	_desk(hood, root, Vector3(dx * 0.5, 0, fd * (d * 0.5 - 5.2)),
 		rng.randf_range(-0.3, 0.3))
 	# Armory: back corner opposite the cells, tall gun locker.
 	var arm_side := -cell_side
 	var ax := arm_side * (w * 0.5 - 1.6)
 	var az := bd * (d * 0.5 - 1.4)
-	hood.bx_solid_box(root, Vector3(1.4, 2.2, 0.7), Vector3(ax, 1.1, az),
-		hood.bx_std(Color(0.16, 0.18, 0.16), 0.6, 0.3))
+	hood.bx_furn(hood.bx_solid_box(root, Vector3(1.4, 2.2, 0.7), Vector3(ax, 1.1, az),
+		hood.bx_std(Color(0.16, 0.18, 0.16), 0.6, 0.3)))
 	_sign(hood, root, "ARMORY", Vector3(ax, 2.55, az + fd * 0.4),
 		Vector3(0, 0, fd), 1.7, 0.42, Color(0.12, 0.12, 0.12), Color(0.90, 0.85, 0.60))
 	# Loot: armory (inert Phase-B firearms/ammo) + lobby desk.
@@ -436,20 +439,20 @@ func _build_hospital(hood: NeighborhoodBuilder, spec: Dictionary) -> Dictionary:
 		hood.bx_window(root, Vector3(wx, 2.2, fz + fd * 0.05), Vector3(0, 0, fd), false)
 	# Lobby: reception counter + waiting chairs.
 	var cz := fd * (d * 0.5 - 2.6)
-	hood.bx_solid_box(root, Vector3(4.0, 1.0, 0.9), Vector3(0, 0.5, cz),
-		hood.bx_mat("counter"))
+	hood.bx_furn(hood.bx_solid_box(root, Vector3(4.0, 1.0, 0.9), Vector3(0, 0.5, cz),
+		hood.bx_mat("counter")))
 	for ci in 4:
 		var chx := -3.0 + 1.6 * ci
-		hood.bx_box(root, Vector3(0.55, 0.08, 0.55),
-			Vector3(chx, 0.45, cz + fd * 2.2), hood.bx_mat("table"))
-		hood.bx_box(root, Vector3(0.55, 0.60, 0.08),
-			Vector3(chx, 0.75, cz + fd * 2.45), hood.bx_mat("table"))
+		hood.bx_furn(hood.bx_box(root, Vector3(0.55, 0.08, 0.55),
+			Vector3(chx, 0.45, cz + fd * 2.2), hood.bx_mat("table")))
+		hood.bx_furn(hood.bx_box(root, Vector3(0.55, 0.60, 0.08),
+			Vector3(chx, 0.75, cz + fd * 2.45), hood.bx_mat("table")))
 	# Wards: two seeded partition layouts at the back.
 	var preset := rng.randi() % 2
 	var ward_z := bd * (d * 0.5 - 3.4)
 	if preset == 0:
-		hood.bx_solid_box(root, Vector3(0.2, h - 0.4, 5.0),
-			Vector3(0, (h - 0.4) * 0.5, ward_z), hood.bx_mat("inner"))
+		hood.bx_furn(hood.bx_solid_box(root, Vector3(0.2, h - 0.4, 5.0),
+			Vector3(0, (h - 0.4) * 0.5, ward_z), hood.bx_mat("inner")))
 		_bed(hood, root, Vector3(-w * 0.25, 0, ward_z), 0.0, rng)
 		_bed(hood, root, Vector3(w * 0.25, 0, ward_z), 0.0, rng)
 	else:
@@ -516,8 +519,8 @@ func _build_grocery(hood: NeighborhoodBuilder, spec: Dictionary) -> Dictionary:
 			+ rng.randf_range(-0.4, 0.4)
 		_shelf_unit(hood, root, Vector3(ax, 0, -1.2), PI * 0.5, true, rng)
 	# Checkout counter near the door.
-	hood.bx_solid_box(root, Vector3(2.4, 1.0, 0.8),
-		Vector3(2.8, 0.5, fd * (d * 0.5 - 2.2)), hood.bx_mat("counter"))
+	hood.bx_furn(hood.bx_solid_box(root, Vector3(2.4, 1.0, 0.8),
+		Vector3(2.8, 0.5, fd * (d * 0.5 - 2.2)), hood.bx_mat("counter")))
 	# Loot: food-heavy aisle ends.
 	hood.bx_add_loot(root.position + Vector3(-w * 0.25, 0.6, -3.4),
 		[["canned_food", 2], ["water", 2]])
@@ -555,13 +558,13 @@ func _build_corner(hood: NeighborhoodBuilder, spec: Dictionary) -> Dictionary:
 	_shelf_unit(hood, root, Vector3(-w * 0.5 + 0.7, 0, 0.4), PI * 0.5, true, rng)
 	_shelf_unit(hood, root, Vector3(w * 0.5 - 0.7, 0, -0.4), PI * 0.5, true, rng)
 	var cooler_z := bd * (d * 0.5 - 0.9)
-	hood.bx_solid_box(root, Vector3(2.4, 1.8, 0.8),
-		Vector3(0.6, 0.9, cooler_z), hood.bx_std(Color(0.85, 0.86, 0.88), 0.6))
-	hood.bx_box(root, Vector3(2.0, 1.2, 0.08),
-		Vector3(0.6, 1.1, cooler_z + fd * 0.42), hood.bx_mat("glass"))
+	hood.bx_furn(hood.bx_solid_box(root, Vector3(2.4, 1.8, 0.8),
+		Vector3(0.6, 0.9, cooler_z), hood.bx_std(Color(0.85, 0.86, 0.88), 0.6)))
+	hood.bx_furn(hood.bx_box(root, Vector3(2.0, 1.2, 0.08),
+		Vector3(0.6, 1.1, cooler_z + fd * 0.42), hood.bx_mat("glass")))
 	# Counter by the door.
-	hood.bx_solid_box(root, Vector3(1.8, 1.0, 0.7),
-		Vector3(-1.6, 0.5, fd * (d * 0.5 - 1.8)), hood.bx_mat("counter"))
+	hood.bx_furn(hood.bx_solid_box(root, Vector3(1.8, 1.0, 0.7),
+		Vector3(-1.6, 0.5, fd * (d * 0.5 - 1.8)), hood.bx_mat("counter")))
 	# Quick-access mixed loot, including one rare medicine outside hospitals.
 	hood.bx_add_loot(root.position + Vector3(0.6, 0.6, cooler_z + fd * 1.1),
 		[["canned_food", 1], ["water", 2], ["medicine", 1]])
@@ -610,23 +613,23 @@ func _build_office_tall(hood: NeighborhoodBuilder, spec: Dictionary) -> Dictiona
 	hood.bx_window(root, Vector3(-3.4, 1.8, fz + fd * 0.05), Vector3(0, 0, fd), false)
 	hood.bx_window(root, Vector3(3.4, 1.8, fz + fd * 0.05), Vector3(0, 0, fd), false)
 	# Lobby: reception desk, side offices with desks.
-	hood.bx_solid_box(root, Vector3(3.2, 1.0, 0.9),
-		Vector3(0, 0.5, fd * (d * 0.5 - 2.4)), hood.bx_mat("counter"))
+	hood.bx_furn(hood.bx_solid_box(root, Vector3(3.2, 1.0, 0.9),
+		Vector3(0, 0.5, fd * (d * 0.5 - 2.4)), hood.bx_mat("counter")))
 	_desk(hood, root, Vector3(-w * 0.28, 0, bd * 1.5), rng.randf_range(-0.4, 0.4))
 	_desk(hood, root, Vector3(w * 0.28, 0, bd * 1.5), rng.randf_range(-0.4, 0.4))
-	hood.bx_solid_box(root, Vector3(0.2, h - 0.4, 4.0),
-		Vector3(-w * 0.14, (h - 0.4) * 0.5, bd * 2.5), hood.bx_mat("inner"))
-	hood.bx_solid_box(root, Vector3(0.2, h - 0.4, 4.0),
-		Vector3(w * 0.14, (h - 0.4) * 0.5, bd * 2.5), hood.bx_mat("inner"))
-	# Stairwell: blocked by a rubble pile.
+	hood.bx_furn(hood.bx_solid_box(root, Vector3(0.2, h - 0.4, 4.0),
+		Vector3(-w * 0.14, (h - 0.4) * 0.5, bd * 2.5), hood.bx_mat("inner")))
+	hood.bx_furn(hood.bx_solid_box(root, Vector3(0.2, h - 0.4, 4.0),
+		Vector3(w * 0.14, (h - 0.4) * 0.5, bd * 2.5), hood.bx_mat("inner")))
+	# Stairwell: blocked by a rubble pile (kept off the back wall).
 	var stx := 0.0
 	var stz := bd * (d * 0.5 - 0.8)
 	for ri in 5:
-		hood.bx_box(root, Vector3(0.7, 0.5, 0.6),
-			Vector3(stx + rng.randf_range(-0.8, 0.8), 0.25 + 0.3 * (ri % 2),
-				stz + rng.randf_range(-0.5, 0.5)),
+		var rz := stz + rng.randf_range(-0.6, 0.1)
+		hood.bx_furn(hood.bx_box(root, Vector3(0.7, 0.5, 0.6),
+			Vector3(stx + rng.randf_range(-0.8, 0.8), 0.25 + 0.3 * (ri % 2), rz),
 			hood.bx_std(Color(0.42, 0.40, 0.38), 0.95),
-			rng.randf_range(0.0, 1.2))
+			rng.randf_range(0.0, 1.2)))
 	# Crafting supplies / scrap + a little food.
 	hood.bx_add_loot(root.position + Vector3(-w * 0.28, 0.6, bd * 0.6),
 		[["scrap", 2], ["cloth", 1]])
@@ -664,19 +667,19 @@ func _build_office_small(hood: NeighborhoodBuilder, spec: Dictionary) -> Diction
 	var preset := rng.randi() % 2
 	var ph := 1.5
 	if preset == 0:
-		hood.bx_solid_box(root, Vector3(3.6, ph, 0.15),
-			Vector3(-1.4, ph * 0.5, bd * 1.2), hood.bx_mat("inner"))
-		hood.bx_solid_box(root, Vector3(0.15, ph, 2.4),
-			Vector3(-1.4, ph * 0.5, bd * 2.2), hood.bx_mat("inner"))
-		hood.bx_solid_box(root, Vector3(3.6, ph, 0.15),
-			Vector3(1.8, ph * 0.5, bd * 2.0), hood.bx_mat("inner"))
+		hood.bx_furn(hood.bx_solid_box(root, Vector3(3.6, ph, 0.15),
+			Vector3(-1.4, ph * 0.5, bd * 1.2), hood.bx_mat("inner")))
+		hood.bx_furn(hood.bx_solid_box(root, Vector3(0.15, ph, 2.4),
+			Vector3(-1.4, ph * 0.5, bd * 2.2), hood.bx_mat("inner")))
+		hood.bx_furn(hood.bx_solid_box(root, Vector3(3.6, ph, 0.15),
+			Vector3(1.8, ph * 0.5, bd * 2.0), hood.bx_mat("inner")))
 	else:
-		hood.bx_solid_box(root, Vector3(0.15, ph, 3.2),
-			Vector3(0, ph * 0.5, bd * 1.8), hood.bx_mat("inner"))
-		hood.bx_solid_box(root, Vector3(3.0, ph, 0.15),
-			Vector3(-1.6, ph * 0.5, bd * 1.4), hood.bx_mat("inner"))
-		hood.bx_solid_box(root, Vector3(3.0, ph, 0.15),
-			Vector3(1.6, ph * 0.5, bd * 2.4), hood.bx_mat("inner"))
+		hood.bx_furn(hood.bx_solid_box(root, Vector3(0.15, ph, 3.2),
+			Vector3(0, ph * 0.5, bd * 1.8), hood.bx_mat("inner")))
+		hood.bx_furn(hood.bx_solid_box(root, Vector3(3.0, ph, 0.15),
+			Vector3(-1.6, ph * 0.5, bd * 1.4), hood.bx_mat("inner")))
+		hood.bx_furn(hood.bx_solid_box(root, Vector3(3.0, ph, 0.15),
+			Vector3(1.6, ph * 0.5, bd * 2.4), hood.bx_mat("inner")))
 	_desk(hood, root, Vector3(-2.0, 0, bd * 1.6), rng.randf_range(-0.5, 0.5))
 	_desk(hood, root, Vector3(1.6, 0, bd * 2.4), rng.randf_range(-0.5, 0.5))
 	_desk(hood, root, Vector3(0.2, 0, fd * 1.8), rng.randf_range(-0.5, 0.5))
