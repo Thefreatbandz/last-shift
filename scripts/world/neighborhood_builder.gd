@@ -255,7 +255,11 @@ func _layout_safehouse_info() -> void:
 	safehouse_porch = pos + Vector3(0, 0, face * (d * 0.5 + 3.0))
 	player_start = safehouse_porch + Vector3(0, 0.3, 0)
 	# Faint smoke column from the safehouse chimney: find home from afar.
-	_beacon(self, pos + Vector3(w * 0.25, 5.4, d * 0.12))
+	# DISABLED (2026-09-29): the particle column renders as an opaque tan
+	# pillar instead of faint smoke — worse than nothing. The boarded
+	# safehouse + [F] CLAIM prompt already mark it. Revisit with a proper
+	# soft shader if a locator is still wanted.
+	#_beacon(self, pos + Vector3(w * 0.25, 5.4, d * 0.12))
 
 
 ## Deterministic layout fingerprint (tests): same seed => identical string.
@@ -1175,39 +1179,6 @@ func _smoke(parent: Node3D, pos: Vector3) -> void:
 	p.position = pos
 	parent.add_child(p)
 
-
-## Faint locator column over the safehouse chimney: tall, thin, light smoke
-## so the player can find home from across the neighborhood.
-func _beacon(parent: Node3D, pos: Vector3) -> void:
-	var p := GPUParticles3D.new()
-	p.amount = 24
-	p.lifetime = 7.0
-	p.preprocess = 7.0
-	p.visibility_aabb = AABB(Vector3(-4, -1, -4), Vector3(8, 18, 8))
-	var pm := ParticleProcessMaterial.new()
-	pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
-	pm.emission_sphere_radius = 0.6
-	pm.direction = Vector3(0, 1, 0)
-	pm.spread = 12.0
-	pm.initial_velocity_min = 1.0
-	pm.initial_velocity_max = 1.8
-	pm.gravity = Vector3(0, 0.3, 0)
-	pm.scale_min = 1.8
-	pm.scale_max = 3.0
-	pm.color = Color(1, 1, 1, 0.14)
-	p.process_material = pm
-	var quad := QuadMesh.new()
-	quad.size = Vector2(1.6, 1.6)
-	var qm := StandardMaterial3D.new()
-	qm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	qm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	qm.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
-	qm.albedo_texture = _smoke_tex
-	qm.albedo_color = Color(0.75, 0.75, 0.78, 1.0)
-	quad.material = qm
-	p.draw_pass_1 = quad
-	p.position = pos
-	parent.add_child(p)
 
 
 func _build_gas_station() -> void:
