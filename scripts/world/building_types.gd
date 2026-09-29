@@ -202,9 +202,14 @@ func _door(hood: NeighborhoodBuilder, root: Node3D, face: float,
 	hood.bx_box(pivot, Vector3(dw * 0.5, dh * 0.3, 0.03),
 		Vector3(dw * 0.5 - 0.03, dh * 0.2, 0.045), panel)
 	var blocker := hood.bx_solid(root, Vector3(dw, dh, t), Vector3(0, dh * 0.5, fz))
+	# Doorway veil: dark quad just inside the doorway. Visible while the
+	# player is outside so an open door never reveals the interior;
+	# hidden when the player goes inside (see house_doors.gd).
+	var veil := hood.bx_box(root, Vector3(dw - 0.08, dh - 0.08, 0.05),
+		Vector3(0, dh * 0.5, fz - face * 0.06), hood.bx_mat("veil"))
 	hood.bx_box(root, Vector3(dw + 0.8, 0.18, 1.2),
 		Vector3(0, 0.09, fz + face * (t * 0.5 + 0.5)), hood.bx_mat("step"))
-	return {"pivot": pivot, "blocker": blocker,
+	return {"pivot": pivot, "blocker": blocker, "veil": veil,
 		"pos": (root.position as Vector3) + Vector3(0, 0, fz),
 		"open": false, "safehouse": false, "locked": locked}
 

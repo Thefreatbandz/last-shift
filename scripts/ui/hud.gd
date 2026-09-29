@@ -62,6 +62,7 @@ var _toast_t := 0.0
 # Title / pause menu: seed display, NEW GAME (new neighborhood), CONTINUE.
 var _hud_root: Control
 var _menu_root: Control
+var _menu_dim: ColorRect
 var _menu_title: Label
 var _menu_sub: Label
 var _menu_seed: Label
@@ -442,7 +443,7 @@ func _ready() -> void:
 func _menu_button(text: String) -> Button:
 	var b := Button.new()
 	b.text = text
-	b.custom_minimum_size = Vector2(300, 64)
+	b.custom_minimum_size = Vector2(320, 76) # fat-finger friendly on phones
 	b.focus_mode = Control.FOCUS_NONE
 	b.add_theme_font_size_override("font_size", 19)
 	b.add_theme_color_override("font_color", Color(0.95, 0.92, 0.85))
@@ -469,10 +470,10 @@ func _build_menu() -> void:
 	_menu_root.visible = false
 	add_child(_menu_root)
 
-	var dim := ColorRect.new()
-	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
-	dim.color = Color(0.015, 0.02, 0.03, 0.96)
-	_menu_root.add_child(dim)
+	_menu_dim = ColorRect.new()
+	_menu_dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_menu_dim.color = Color(0.015, 0.02, 0.03, 0.96)
+	_menu_root.add_child(_menu_dim)
 
 	var vbox := VBoxContainer.new()
 	vbox.set_anchors_preset(Control.PRESET_CENTER)
@@ -487,18 +488,21 @@ func _build_menu() -> void:
 	_menu_title = Label.new()
 	_menu_title.text = "LAST SHIFT"
 	_menu_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_menu_title.add_theme_font_size_override("font_size", 58)
-	_menu_title.add_theme_color_override("font_color", Color(0.93, 0.88, 0.76))
-	_menu_title.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
-	_menu_title.add_theme_constant_override("shadow_offset_x", 3)
-	_menu_title.add_theme_constant_override("shadow_offset_y", 3)
+	_menu_title.add_theme_font_size_override("font_size", 76)
+	_menu_title.add_theme_color_override("font_color", Color(1.0, 0.62, 0.22))
+	_menu_title.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.95))
+	_menu_title.add_theme_constant_override("shadow_offset_x", 4)
+	_menu_title.add_theme_constant_override("shadow_offset_y", 4)
 	vbox.add_child(_menu_title)
 
 	_menu_sub = Label.new()
-	_menu_sub.text = "Every neighborhood is different. Every run is yours."
+	_menu_sub.text = "The city fell. The streets are yours — if you survive them."
 	_menu_sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_menu_sub.add_theme_font_size_override("font_size", 16)
-	_menu_sub.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
+	_menu_sub.add_theme_font_size_override("font_size", 18)
+	_menu_sub.add_theme_color_override("font_color", Color(1, 1, 1, 0.72))
+	_menu_sub.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
+	_menu_sub.add_theme_constant_override("shadow_offset_x", 2)
+	_menu_sub.add_theme_constant_override("shadow_offset_y", 2)
 	_menu_sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vbox.add_child(_menu_sub)
 
@@ -506,6 +510,7 @@ func _build_menu() -> void:
 	_menu_seed.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_menu_seed.add_theme_font_size_override("font_size", 21)
 	_menu_seed.add_theme_color_override("font_color", Color(0.95, 0.75, 0.30))
+	_menu_seed.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vbox.add_child(_menu_seed)
 
 	_menu_continue = _menu_button("CONTINUE")
@@ -530,9 +535,10 @@ func is_menu_open() -> bool:
 
 
 func _set_menu(seed_text: String, title: String, show_continue: bool,
-		show_sub: bool) -> void:
+		show_sub: bool, dim_alpha := 0.96) -> void:
 	_menu_open = true
 	_menu_root.visible = true
+	_menu_dim.color = Color(0.015, 0.02, 0.03, dim_alpha)
 	_menu_title.text = title
 	_menu_sub.visible = show_sub
 	_menu_seed.text = seed_text
@@ -541,9 +547,10 @@ func _set_menu(seed_text: String, title: String, show_continue: bool,
 	_hud_root.visible = false
 
 
-## Title screen: shown at boot when no seed is chosen yet.
+## Title screen: shown at boot when no seed is chosen yet. The dim stays
+## light so the apocalyptic backdrop shows through.
 func show_title() -> void:
-	_set_menu("NO NEIGHBORHOOD YET — START A NEW GAME", "LAST SHIFT", false, true)
+	_set_menu("NO NEIGHBORHOOD YET — START A NEW GAME", "LAST SHIFT", false, true, 0.42)
 
 
 ## Pause menu: seed label, CONTINUE, NEW GAME.
@@ -556,6 +563,36 @@ func hide_menu() -> void:
 	_menu_root.visible = false
 	_hud_root.visible = true
 	_hud_menu_btn.visible = true
+
+
+## Loading veil: immediate tap feedback while a new neighborhood builds.
+## Shown on NEW GAME tap, hidden once the run starts (scene reload frees it
+## anyway — this is belt-and-suspenders for slow first builds on phones).
+var _loading_label: Label
+
+func show_loading(text: String) -> void:
+	if _loading_label == null:
+		_loading_label = Label.new()
+		_loading_label.set_anchors_preset(Control.PRESET_CENTER)
+		_loading_label.offset_left = -340
+		_loading_label.offset_right = 340
+		_loading_label.offset_top = 200
+		_loading_label.offset_bottom = 260
+		_loading_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_loading_label.add_theme_font_size_override("font_size", 22)
+		_loading_label.add_theme_color_override("font_color", Color(0.95, 0.85, 0.60))
+		_loading_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
+		_loading_label.add_theme_constant_override("shadow_offset_x", 2)
+		_loading_label.add_theme_constant_override("shadow_offset_y", 2)
+		_loading_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_menu_root.add_child(_loading_label)
+	_loading_label.text = text
+	_loading_label.visible = true
+
+
+func hide_loading() -> void:
+	if _loading_label != null:
+		_loading_label.visible = false
 
 
 func _input(event: InputEvent) -> void:

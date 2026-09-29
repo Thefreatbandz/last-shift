@@ -61,8 +61,23 @@ func _parse_cli_args() -> void:
 func _show_title() -> void:
 	player.process_mode = Node.PROCESS_MODE_DISABLED
 	player.visible = false
-	hud.new_game_pressed.connect(_on_new_game)
+	_connect_menu_signals()
+	# Apocalyptic diorama behind the menu; the scene reload on new game
+	# frees it, so it only ever exists on the title screen.
+	add_child(TitleBackdrop.new())
 	hud.show_title()
+
+
+## Menu signal wiring, guarded: _show_title() and _start_run() both wire the
+## same HUD signals, and a double-connect would fire _on_new_game twice per
+## tap (double reload on web is a real hang risk on iOS Safari).
+func _connect_menu_signals() -> void:
+	if not hud.new_game_pressed.is_connected(_on_new_game):
+		hud.new_game_pressed.connect(_on_new_game)
+	if not hud.continue_pressed.is_connected(_on_continue):
+		hud.continue_pressed.connect(_on_continue)
+	if not hud.menu_pressed.is_connected(_on_menu_button):
+		hud.menu_pressed.connect(_on_menu_button)
 
 
 ## Builds the seeded neighborhood and wires every system to it.
@@ -210,9 +225,7 @@ func _start_run(seed: int) -> void:
 
 	hud.interact_pressed.connect(interact.try_interact)
 	hud.backpack_pressed.connect(_inv_panel.toggle)
-	hud.menu_pressed.connect(_on_menu_button)
-	hud.new_game_pressed.connect(_on_new_game)
-	hud.continue_pressed.connect(_on_continue)
+	_connect_menu_signals()
 
 	# Audio hooks.
 	loot.loot_granted.connect(_on_loot_granted.bind(player))
@@ -269,10 +282,25 @@ func _on_continue() -> void:
 
 ## New neighborhood: pick a fresh seed and reload the scene — the reload
 ## tears down every system cleanly (no stale interactions, no leaks).
+## Hardened for touch: the tap shows immediate feedback (so a slow world
+## build never reads as "nothing happened"), extra taps while the reload is
+## queued are ignored, and the reload itself is deferred out of GUI input
+## dispatch (calling reload synchronously from a button signal is fragile
+## on iOS Safari's web build).
+var _new_game_queued := false
+
 func _on_new_game() -> void:
-	Sound.play("click")
+	if _new_game_queued:
+		return
+	_new_game_queued = true
 	RunState.world_seed = randi() % 100000000
 	get_tree().paused = false
+	Sound.play("click")
+	hud.show_loading("BUILDING NEIGHBORHOOD...")
+	call_deferred("_do_new_game_reload")
+
+
+func _do_new_game_reload() -> void:
 	get_tree().reload_current_scene()
 
 

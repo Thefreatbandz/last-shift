@@ -71,6 +71,7 @@ var _gas_pos := Vector3.ZERO # gas station origin
 var _m_roof: StandardMaterial3D
 var _m_chimney: StandardMaterial3D
 var _m_door: StandardMaterial3D
+var _m_veil: StandardMaterial3D # dark doorway veil: blocks see-through from outside
 var _m_door_panel: StandardMaterial3D
 var _m_window_dark: StandardMaterial3D
 var _m_pole: StandardMaterial3D
@@ -480,6 +481,9 @@ func _make_materials() -> void:
 	_m_roof.cull_mode = BaseMaterial3D.CULL_DISABLED # hand-built prism: skip winding worries
 	_m_chimney = _std(Color(0.36, 0.23, 0.18))
 	_m_door = _std(Color(0.15, 0.12, 0.10))
+	_m_veil = _std(Color(0.012, 0.012, 0.016))
+	_m_veil.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_m_veil.cull_mode = BaseMaterial3D.CULL_DISABLED
 	_m_door_panel = _std(Color(0.19, 0.15, 0.12), 0.8)
 	_m_window_dark = _std(Color(0.07, 0.09, 0.12), 0.25, 0.6)
 	_m_pole = _std(Color(0.15, 0.15, 0.16), 0.6, 0.4)
@@ -563,6 +567,7 @@ func _make_materials() -> void:
 	_bx_mats = {
 		"trim": _m_trim, "foundation": _m_foundation, "step": _m_step,
 		"floor": _m_floor, "inner": _m_inner, "door": _m_door,
+		"veil": _m_veil,
 		"door_panel": _m_door_panel, "window_dark": _m_window_dark,
 		"glass": _m_glass, "pole": _m_pole, "wood": _m_wood,
 		"counter": _m_counter, "shelf": _m_shelf, "table": _m_table,
@@ -962,6 +967,11 @@ func _house(pos: Vector3, face: float, w: float, d: float, wall: Color, roof_c: 
 		Vector3(0, 0.07, fz + face * 0.75), _m_step)
 	# Doorway blocker: solid while the door is closed, disabled when open.
 	var blocker := _solid(root, Vector3(door_w, door_h, 0.24), Vector3(0, door_h * 0.5, fz))
+	# Doorway veil: dark quad just inside the doorway. Visible while the
+	# player is outside so an open door never reveals the interior;
+	# hidden when the player goes inside (see house_doors.gd).
+	var veil := _box(root, Vector3(door_w - 0.08, door_h - 0.08, 0.05),
+		Vector3(0, door_h * 0.5, fz - face * 0.06), _m_veil)
 	_build_interior(root, w, d, face)
 	# Lawn patch grounding the house.
 	_box(root, Vector3(w + 5.0, 0.02, d + 5.0), Vector3(0, 0.005, 0), _m_lawn)
@@ -994,7 +1004,7 @@ func _house(pos: Vector3, face: float, w: float, d: float, wall: Color, roof_c: 
 	_box(root, Vector3(0.5, 0.4, 0.03), Vector3(acx - 0.38, 0.33, 0.5),
 		_m_ac_dark) # fan grille
 	var door := {
-		"pivot": pivot, "blocker": blocker,
+		"pivot": pivot, "blocker": blocker, "veil": veil,
 		"pos": pos + Vector3(0, 0, fz), "open": false, "safehouse": false,
 	}
 	houses.append({"pos": pos, "w": w, "d": d, "face": face, "roof": roof_g, "door": door})

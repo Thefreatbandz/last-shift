@@ -202,6 +202,11 @@ func _process(_delta: float) -> void:
 		if inside != bool(_roof_hidden[i]):
 			_roof_hidden[i] = inside
 			(h["roof"] as Node3D).visible = not inside
+		# Doorway veil: blocks the see-through while the player is
+		# outside; hidden when inside so the player can see out.
+		var hdoor := h["door"] as Dictionary
+		if hdoor.has("veil"):
+			(hdoor["veil"] as MeshInstance3D).visible = not inside
 	# Commercial buildings hide their roof group the same way.
 	for j in _hood.buildings.size():
 		var b := _hood.buildings[j] as Dictionary
@@ -211,3 +216,6 @@ func _process(_delta: float) -> void:
 		if binside != bool(_broof_hidden[j]):
 			_broof_hidden[j] = binside
 			(b["roof"] as Node3D).visible = not binside
+		var bdoor := b["door"] as Dictionary
+		if bdoor.has("veil"):
+			(bdoor["veil"] as MeshInstance3D).visible = not binside
