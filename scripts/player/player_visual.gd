@@ -31,11 +31,22 @@ var _target_yaw := 0.0
 var _head_base_y := 0.0
 
 # Phase 3: one-shot action overlays (kneel/search, pickup, eat, door push,
-# hurt flinch). Applied additively on top of the walk/idle pose each tick,
-# so the base animation is never disturbed.
+# hurt flinch, attack swing). Applied additively on top of the walk/idle pose
+# each tick, so the base animation is never disturbed.
 var _action := ""
 var _action_t := 0.0
 var _action_dur := 1.0
+# Snapshot-relative absolute overlay: _start_action snapshots every channel
+# the actions can touch; _apply_action then writes snapshot + envelope *
+# amount each frame, AFTER the base pose. The base can write whatever it
+# likes underneath — the overlay always wins during the action, can never
+# accumulate, and leaves zero residue.
+var _snap := {}
+
+# Nail bat mount: combat hands us the weapon pivot; it rides in the right
+# hand (forearm child) so the swing is genuinely arms-driven.
+var _weapon_pivot: Node3D = null
+var _weapon_rest_x := 0.0
 
 # Materials (created once, shared across every part).
 var _m_jacket: StandardMaterial3D
@@ -109,13 +120,77 @@ func play_hurt_flinch() -> void:
 	_start_action("hurt", 0.45)
 
 
+func play_attack(duration: float) -> void:
+	_start_action("attack", duration)
+
+
+## Combat mounts the nail-bat pivot in the right hand so the swing is
+## arms-driven: the shoulder/elbow carry the bat through the arc.
+func attach_weapon(pivot: Node3D) -> void:
+	_weapon_pivot = pivot
+	if _fore_r == null:
+		# Visual not built yet (shouldn't happen — combat sets up after
+		# _ready); fall back to the old floating mount.
+		add_child(pivot)
+		pivot.position = Vector3(0.33, 1.28, -0.06)
+		_weapon_rest_x = 0.55
+		pivot.rotation.x = _weapon_rest_x
+		return
+	_fore_r.add_child(pivot)
+	pivot.position = Vector3(0, -0.37, -0.04) # in the gloved hand
+	# Rest: business end angled down-forward, like the old mount.
+	_weapon_rest_x = PI + 0.55
+	pivot.rotation.x = _weapon_rest_x
+	pivot.rotation.y = 0.0
+	pivot.rotation.z = 0.0
+
+
 func _start_action(name: String, dur: float) -> void:
-	# A new action cancels the old one mid-envelope: reset the one-shot
-	# overlay channel no base pose rewrites, or it would stick forever.
-	_body.position.z = 0.0
+	# Switching mid-envelope: restore the old snapshot first so the new
+	# action starts from clean base values (no residue, no stacking).
+	if _action != "":
+		_restore_snap()
+	_snap = _snap_channels()
 	_action = name
 	_action_t = 0.0
 	_action_dur = dur
+
+
+func _snap_channels() -> Dictionary:
+	return {
+		"py": _body.position.y, "pz": _body.position.z,
+		"rx": _body.rotation.x, "rz": _body.rotation.z,
+		"leg_l": _leg_l.rotation.x, "leg_r": _leg_r.rotation.x,
+		"shin_l": _shin_l.rotation.x, "shin_r": _shin_r.rotation.x,
+		"arm_l": _arm_l.rotation.x, "arm_r": _arm_r.rotation.x,
+		"fore_l": _fore_l.rotation.x, "fore_r": _fore_r.rotation.x,
+		"head_x": _head.rotation.x, "head_z": _head.rotation.z,
+		"arml_z": _arm_l.rotation.z, "armr_z": _arm_r.rotation.z,
+	}
+
+
+func _restore_snap() -> void:
+	if _snap.is_empty():
+		return
+	_body.position.y = _snap["py"]
+	_body.position.z = _snap["pz"]
+	_body.rotation.x = _snap["rx"]
+	_body.rotation.z = _snap["rz"]
+	_leg_l.rotation.x = _snap["leg_l"]
+	_leg_r.rotation.x = _snap["leg_r"]
+	_shin_l.rotation.x = _snap["shin_l"]
+	_shin_r.rotation.x = _snap["shin_r"]
+	_arm_l.rotation.x = _snap["arm_l"]
+	_arm_r.rotation.x = _snap["arm_r"]
+	_fore_l.rotation.x = _snap["fore_l"]
+	_fore_r.rotation.x = _snap["fore_r"]
+	_head.rotation.x = _snap["head_x"]
+	_head.rotation.z = _snap["head_z"]
+	_arm_l.rotation.z = _snap["arml_z"]
+	_arm_r.rotation.z = _snap["armr_z"]
+	_body.rotation.y = 0.0
+	if _weapon_pivot != null:
+		_weapon_pivot.rotation.x = _weapon_rest_x
 
 
 func _apply_action(delta: float) -> void:
@@ -123,46 +198,107 @@ func _apply_action(delta: float) -> void:
 		return
 	_action_t += delta
 	var t := clampf(_action_t / _action_dur, 0.0, 1.0)
-	var e: float
-	if _action == "kneel":
-		# Ease in, hold through the search, ease out at the end.
-		e = smoothstep(0.0, 0.25, t) * (1.0 - smoothstep(0.8, 1.0, t))
+	if _action == "attack":
+		_apply_attack(t)
 	else:
-		e = sin(t * PI) # smooth in/out one-shot
-	match _action:
-		"kneel":
-			_body.position.y -= 0.38 * e
-			_body.rotation.x += 0.18 * e
-			_leg_l.rotation.x -= 0.90 * e
-			_leg_r.rotation.x -= 0.90 * e
-			_shin_l.rotation.x += 1.40 * e
-			_shin_r.rotation.x += 1.40 * e
-			_arm_l.rotation.x -= 0.55 * e
-			_arm_r.rotation.x -= 0.55 * e
-		"pickup":
-			_body.rotation.x += 0.75 * e
-			_body.position.y -= 0.18 * e
-			_arm_l.rotation.x -= 0.90 * e
-			_arm_r.rotation.x -= 0.90 * e
-			_head.rotation.x += 0.35 * e
-		"eat":
-			_arm_r.rotation.x -= 1.35 * e
-			_fore_r.rotation.x -= 0.90 * e
-			_head.rotation.x += 0.18 * e
-		"door":
-			_arm_l.rotation.x -= 1.15 * e
-			_arm_r.rotation.x -= 1.15 * e
-			_body.rotation.x += 0.28 * e
-			_body.position.z = -0.12 * e
-		"hurt":
-			_body.rotation.z += 0.28 * e
-			_body.rotation.x -= 0.18 * e
-			_head.rotation.z += 0.30 * e
-			_arm_l.rotation.z += 0.50 * e
-			_arm_r.rotation.z -= 0.50 * e
+		var e: float
+		if _action == "kneel":
+			# Ease in, hold through the search, ease out at the end.
+			e = smoothstep(0.0, 0.25, t) * (1.0 - smoothstep(0.8, 1.0, t))
+		else:
+			e = sin(t * PI) # smooth in/out one-shot
+		_apply_overlay(_action, e)
 	if t >= 1.0:
+		# Envelope is back at zero, so the last writes equal the snapshot;
+		# the base pose takes over from here with nothing left behind.
 		_action = ""
-		_body.position.z = 0.0
+
+
+## One-shot overlay channels. `d` is the envelope delta for this frame;
+## every line is `+= d * amount` (or an absolute the base never writes),
+## so interrupting or finishing an action leaves zero residue.
+func _apply_overlay(action: String, e: float) -> void:
+	# Snapshot-relative absolute writes: each channel is the snapshot value
+	# plus the full current envelope offset. The base pose already ran this
+	# frame; the overlay wins on its channels and can never accumulate.
+	var s := _snap
+	match action:
+		"kneel":
+			# Drop is tuned so the folded legs keep the feet planted: the
+			# visual must never sink through the floor.
+			_body.position.y = s["py"] - 0.26 * e
+			_body.rotation.x = s["rx"] + 0.18 * e
+			_leg_l.rotation.x = s["leg_l"] - 0.90 * e
+			_leg_r.rotation.x = s["leg_r"] - 0.90 * e
+			_shin_l.rotation.x = s["shin_l"] + 1.40 * e
+			_shin_r.rotation.x = s["shin_r"] + 1.40 * e
+			_arm_l.rotation.x = s["arm_l"] + 0.55 * e # reach forward into the chest
+			_arm_r.rotation.x = s["arm_r"] + 0.55 * e
+		"pickup":
+			# Bow forward over the chest and grab: slight crouch keeps the
+			# feet planted (no floor penetration), torso bends forward.
+			_body.rotation.x = s["rx"] - 0.30 * e
+			_body.position.y = s["py"] - 0.06 * e
+			_leg_l.rotation.x = s["leg_l"] + 0.35 * e
+			_leg_r.rotation.x = s["leg_r"] + 0.35 * e
+			_shin_l.rotation.x = s["shin_l"] - 0.55 * e
+			_shin_r.rotation.x = s["shin_r"] - 0.55 * e
+			_arm_l.rotation.x = s["arm_l"] + 0.95 * e
+			_arm_r.rotation.x = s["arm_r"] + 0.95 * e
+			_head.rotation.x = s["head_x"] - 0.25 * e
+		"eat":
+			_arm_r.rotation.x = s["arm_r"] - 1.35 * e
+			_fore_r.rotation.x = s["fore_r"] - 0.90 * e
+			_head.rotation.x = s["head_x"] + 0.18 * e
+		"door":
+			_arm_l.rotation.x = s["arm_l"] - 1.15 * e
+			_arm_r.rotation.x = s["arm_r"] - 1.15 * e
+			_body.rotation.x = s["rx"] + 0.28 * e
+			_body.position.z = s["pz"] - 0.12 * e
+		"hurt":
+			# Stagger BACK away from the attacker: positive rotation.x rocks
+			# the torso toward +Z (behind a -Z-facing character).
+			_body.rotation.z = s["rz"] + 0.28 * e
+			_body.rotation.x = s["rx"] + 0.18 * e
+			_head.rotation.z = s["head_z"] + 0.30 * e
+			_arm_l.rotation.z = s["arml_z"] + 0.50 * e
+			_arm_r.rotation.z = s["armr_z"] - 0.50 * e
+
+
+## Arm pose for the bat swing at envelope t. Returns OFFSET angles added onto
+## the snapshot pose; pose(0) == pose(1) on every channel so a full swing
+## leaves zero residue.
+func _attack_pose(t: float) -> Dictionary:
+	var wind := smoothstep(0.0, 0.35, t)
+	var sweep := smoothstep(0.35, 0.62, t)
+	var relax := smoothstep(0.62, 1.0, t)
+	var shoulder := lerpf(lerpf(0.0, -1.05, wind), 1.35, sweep)
+	shoulder = lerpf(shoulder, 0.0, relax)
+	var elbow := lerpf(lerpf(-0.15, -1.15, wind), -0.25, sweep)
+	elbow = lerpf(elbow, -0.15, relax)
+	var offarm := lerpf(lerpf(0.0, 0.40, wind), -0.30, sweep)
+	offarm = lerpf(offarm, 0.0, relax)
+	var twist := lerpf(lerpf(0.0, -0.30, wind), 0.28, sweep)
+	twist = lerpf(twist, 0.0, relax)
+	var snap := lerpf(lerpf(0.0, 0.30, wind), -0.50, sweep)
+	snap = lerpf(snap, 0.0, relax)
+	return {"shoulder": shoulder, "elbow": elbow, "offarm": offarm,
+			"twist": twist, "snap": snap}
+
+
+## ARMS-DRIVEN bat swing: the shoulder/elbow carry the weapon (it rides in
+## the right hand). Wind up, sweep through, follow through. Arm channels are
+## snapshot-relative (no accumulation); the torso twists slightly with the
+## swing; the body never lunges or pitches forward into the zombie.
+func _apply_attack(t: float) -> void:
+	var pose := _attack_pose(t)
+	var s := _snap
+	_arm_r.rotation.x = s["arm_r"] + pose["shoulder"]
+	_fore_r.rotation.x = s["fore_r"] + pose["elbow"]
+	_arm_l.rotation.x = s["arm_l"] + pose["offarm"]
+	_body.rotation.y = pose["twist"]
+	if _weapon_pivot != null:
+		_weapon_pivot.rotation.x = _weapon_rest_x + pose["snap"]
 
 
 func _walk(delta: float, speed: float, k: float) -> void:

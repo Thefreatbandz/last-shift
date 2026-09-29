@@ -1,10 +1,10 @@
 class_name PlayerCombat
 extends Node
 ## Phase 2: manual melee combat. Desktop: Space / left-click. Touch: the
-## HUD's big ATTACK button. A nail bat lives in the survivor's hand (built
-## here as a child of Visual — player_visual.gd itself is untouched) and
-## sweeps on each swing. Hits land in a 2.2m frontal arc with knockback and
-## emit a small noise pulse. Also emits footstep noise while sprinting.
+## HUD's big ATTACK button. A nail bat lives in the survivor's right hand
+## (built here, mounted on the forearm by PlayerVisual.attach_weapon) and
+## the arms drive each swing. Hits land in a 2.2m frontal arc with knockback
+## and emit a small noise pulse. Also emits footstep noise while sprinting.
 
 const SWING_TIME := 0.34
 const COOLDOWN := 0.45
@@ -85,11 +85,10 @@ func setup(player: PlayerController, hud: Hud, zombies: ZombieManager,
 
 
 func _build_weapon() -> void:
-	# Nail bat carried in the right hand. Pivot near the shoulder so the
-	# swing reads from the gameplay camera.
+	# Nail bat carried in the right hand. The visual parents the pivot to
+	# the forearm so the swing below is arms-driven.
 	_weapon_pivot = Node3D.new()
-	_weapon_pivot.position = Vector3(0.33, 1.28, -0.06)
-	_visual.add_child(_weapon_pivot)
+	(_visual as PlayerVisual).attach_weapon(_weapon_pivot)
 	var wood := StandardMaterial3D.new()
 	wood.albedo_color = Color(0.42, 0.30, 0.18)
 	wood.roughness = 0.9
@@ -114,7 +113,8 @@ func _build_weapon() -> void:
 		nail.position = Vector3(0, 0.05 + 0.12 * i, 0.045)
 		nail.material_override = steel
 		_weapon_pivot.add_child(nail)
-	_weapon_pivot.rotation.x = 0.55 # rest: angled down-forward
+	# Rest orientation is set by PlayerVisual.attach_weapon (bat rides in
+	# the hand, business end angled down-forward).
 	# Swoosh streak: a thin quad in the swing plane, flashed mid-swing.
 	_swoosh_mat = StandardMaterial3D.new()
 	_swoosh_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
@@ -140,6 +140,7 @@ func try_attack() -> void:
 	_cd = COOLDOWN
 	_swing_t = SWING_TIME
 	_hit_done = false
+	(_visual as PlayerVisual).play_attack(SWING_TIME)
 	Sound.play("swoosh")
 	_noise.emit_noise(_player.global_position, MELEE_NOISE_RADIUS)
 
@@ -160,15 +161,13 @@ func _update_swing(delta: float) -> void:
 		return
 	_swing_t -= delta
 	var t := 1.0 - _swing_t / SWING_TIME # 0 -> 1
-	# Raise fast, sweep through, settle back.
-	var ang := lerpf(-1.9, 0.9, ease(t, 0.6))
-	_weapon_pivot.rotation.x = ang
+	# The arm swing itself is driven by PlayerVisual's "attack" action (the
+	# bat rides in the right hand); combat only times the hit + swoosh.
 	_update_swoosh(t)
 	if not _hit_done and t >= 0.45:
 		_hit_done = true
 		_apply_hit()
 	if _swing_t <= 0.0:
-		_weapon_pivot.rotation.x = 0.55
 		_swoosh.visible = false
 
 

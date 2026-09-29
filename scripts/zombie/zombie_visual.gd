@@ -27,6 +27,12 @@ var _head_base_y := 0.0
 # --- Hit feedback (combat): flinch overlay + white/red damage flash. ---
 var _flinch_t := 0.0
 const FLINCH_TIME := 0.30
+# Snapshot-relative absolute flinch overlay: play_hit_reaction snapshots
+# every flinch channel; _apply_flinch writes snapshot + envelope * amount
+# each frame after the base pose. The shamble can write whatever it likes
+# underneath — the flinch always wins while active, can never accumulate,
+# and leaves zero residue.
+var _flinch_snap := {}
 var _flash_t := 0.0
 var _flash_on := false
 var _meshes: Array[MeshInstance3D] = []
@@ -127,7 +133,28 @@ func play_lunge() -> void:
 ## Called by ZombieAI.take_damage: quick stagger — torso rocks back, head
 ## snaps, arms flail up — blended as an overlay on top of the shamble.
 func play_hit_reaction(_from_dir: Vector3) -> void:
+	# Unwind any in-flight flinch so rapid hits can't stack residue.
+	if _flinch_t > 0.0:
+		_restore_flinch_snap()
+	_flinch_snap = {
+		"rx": _body.rotation.x, "pz": _body.position.z,
+		"head_x": _head.rotation.x,
+		"arm_l": _arm_l.rotation.x, "arm_r": _arm_r.rotation.x,
+		"arml_z": _arm_l.rotation.z, "armr_z": _arm_r.rotation.z,
+	}
 	_flinch_t = FLINCH_TIME
+
+
+func _restore_flinch_snap() -> void:
+	if _flinch_snap.is_empty():
+		return
+	_body.rotation.x = _flinch_snap["rx"]
+	_body.position.z = _flinch_snap["pz"]
+	_head.rotation.x = _flinch_snap["head_x"]
+	_arm_l.rotation.x = _flinch_snap["arm_l"]
+	_arm_r.rotation.x = _flinch_snap["arm_r"]
+	_arm_l.rotation.z = _flinch_snap["arml_z"]
+	_arm_r.rotation.z = _flinch_snap["armr_z"]
 
 
 ## Brief white/red emissive flash so the connect reads even at distance.
@@ -138,6 +165,10 @@ func flash_hit() -> void:
 
 ## Called once by ZombieAI._die: folds the body into a crumple.
 func play_death() -> void:
+	# Unwind any in-flight flinch so the corpse starts from the base pose.
+	if _flinch_t > 0.0:
+		_restore_flinch_snap()
+	_flinch_t = 0.0
 	_dead_t = 0.0
 
 
@@ -183,17 +214,19 @@ func tick_dead(delta: float) -> void:
 
 
 func _apply_flinch(delta: float) -> void:
-	# Additive overlay: envelope 0 -> 1 -> 0 over FLINCH_TIME.
+	# Snapshot-relative absolute writes: snapshot + full current envelope
+	# offset. Envelope 0 -> 1 -> 0 over FLINCH_TIME; net is exactly zero.
 	_flinch_t -= delta
 	var t := clampf(1.0 - _flinch_t / FLINCH_TIME, 0.0, 1.0)
 	var f := sin(t * PI)
-	_body.rotation.x -= f * 0.45 # torso rocks back
-	_body.position.z = f * 0.14 # shoved backward; absolute so it relaxes to 0
-	_head.rotation.x -= f * 0.55 # head snaps back
-	_arm_l.rotation.x -= f * 0.9 # arms flail up
-	_arm_r.rotation.x -= f * 0.9
-	_arm_l.rotation.z += f * 0.4
-	_arm_r.rotation.z -= f * 0.4
+	var s := _flinch_snap
+	_body.position.z = s["pz"] + f * 0.14 # shoved BACKWARD, away from the attacker
+	_body.rotation.x = s["rx"] + f * 0.45 # torso rocks BACK, away from the attacker
+	_head.rotation.x = s["head_x"] + f * 0.55 # head snaps back
+	_arm_l.rotation.x = s["arm_l"] - f * 0.9 # arms flail
+	_arm_r.rotation.x = s["arm_r"] - f * 0.9
+	_arm_l.rotation.z = s["arml_z"] + f * 0.4
+	_arm_r.rotation.z = s["armr_z"] - f * 0.4
 
 
 func _set_flash(on: bool) -> void:
