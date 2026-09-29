@@ -7,7 +7,7 @@ extends Node
 
 signal clock_changed(day: int, hour: int, minute: int)
 
-const DAY_LENGTH := 480.0 # real seconds per 24 game hours
+const DAY_LENGTH := 720.0 # real seconds per 24 game hours
 
 const DAY_TOP := Color(0.25, 0.50, 0.85)
 const DAY_HOR := Color(0.75, 0.82, 0.90)

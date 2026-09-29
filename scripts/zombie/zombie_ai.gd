@@ -96,9 +96,10 @@ func on_noise(pos: Vector3, radius: float) -> void:
 		_look_t = 0.0
 
 
-func take_damage(amount: float, from_pos: Vector3) -> void:
+## Returns true if the blow killed the zombie (for hit feedback sizing).
+func take_damage(amount: float, from_pos: Vector3) -> bool:
 	if _dead:
-		return
+		return false
 	hp -= amount
 	_to = global_position - from_pos
 	_to.y = 0.0
@@ -110,8 +111,12 @@ func take_damage(amount: float, from_pos: Vector3) -> void:
 	_lose_t = 0.0
 	if hp <= 0.0:
 		_die()
-	elif state != State.CHASE and state != State.ATTACK and player:
+		return true
+	visual.play_hit_reaction(_to)
+	visual.flash_hit()
+	if state != State.CHASE and state != State.ATTACK and player:
 		state = State.CHASE
+	return false
 
 
 func _die() -> void:

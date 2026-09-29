@@ -21,6 +21,14 @@ var _target_yaw := 0.0
 var _lunge_t := 0.0
 var _head_base_y := 0.0
 
+# --- Hit feedback (combat): flinch overlay + white/red damage flash. ---
+var _flinch_t := 0.0
+const FLINCH_TIME := 0.30
+var _flash_t := 0.0
+var _flash_on := false
+var _meshes: Array[MeshInstance3D] = []
+static var _flash_mat: StandardMaterial3D = null
+
 # Shared materials, built once for every zombie.
 static var _mats: Dictionary = {}
 
@@ -60,6 +68,8 @@ func _ready() -> void:
 	shared_mats()
 	_build()
 	_head_base_y = _head.position.y
+	_collect_meshes(self)
+	_get_flash_mat()
 
 
 func set_target_yaw(y: float) -> void:
@@ -68,6 +78,18 @@ func set_target_yaw(y: float) -> void:
 
 func play_lunge() -> void:
 	_lunge_t = 0.38
+
+
+## Called by ZombieAI.take_damage: quick stagger — torso rocks back, head
+## snaps, arms flail up — blended as an overlay on top of the shamble.
+func play_hit_reaction(_from_dir: Vector3) -> void:
+	_flinch_t = FLINCH_TIME
+
+
+## Brief white/red emissive flash so the connect reads even at distance.
+func flash_hit() -> void:
+	_flash_t = 0.13
+	_set_flash(true)
 
 
 func tick(delta: float, speed: float, moving: bool) -> void:
@@ -79,6 +101,49 @@ func tick(delta: float, speed: float, moving: bool) -> void:
 		_shamble(delta, speed)
 	else:
 		_idle_sway(delta)
+	if _flinch_t > 0.0:
+		_apply_flinch(delta)
+	if _flash_t > 0.0:
+		_flash_t -= delta
+		if _flash_t <= 0.0:
+			_set_flash(false)
+
+
+func _apply_flinch(delta: float) -> void:
+	# Additive overlay: envelope 0 -> 1 -> 0 over FLINCH_TIME.
+	_flinch_t -= delta
+	var t := clampf(1.0 - _flinch_t / FLINCH_TIME, 0.0, 1.0)
+	var f := sin(t * PI)
+	_body.rotation.x -= f * 0.45 # torso rocks back
+	_body.position.z += f * 0.14 # shoved backward
+	_head.rotation.x -= f * 0.55 # head snaps back
+	_arm_l.rotation.x -= f * 0.9 # arms flail up
+	_arm_r.rotation.x -= f * 0.9
+	_arm_l.rotation.z += f * 0.4
+	_arm_r.rotation.z -= f * 0.4
+
+
+func _set_flash(on: bool) -> void:
+	if _flash_on == on:
+		return
+	_flash_on = on
+	for m in _meshes:
+		m.material_overlay = _flash_mat if on else null
+
+
+func _collect_meshes(n: Node) -> void:
+	for c in n.get_children():
+		if c is MeshInstance3D:
+			_meshes.append(c)
+		_collect_meshes(c)
+
+
+static func _get_flash_mat() -> StandardMaterial3D:
+	if _flash_mat == null:
+		_flash_mat = StandardMaterial3D.new()
+		_flash_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		_flash_mat.albedo_color = Color(1.0, 0.82, 0.78)
+	return _flash_mat
 
 
 func _shamble(delta: float, speed: float) -> void:

@@ -21,13 +21,18 @@ var _zombies: ZombieManager
 var _noise: NoiseBus
 var _health: PlayerHealth
 var _visual: Node3D
+var _blood: BloodFX
+var _camera_rig: CameraRig
 
 var _weapon_pivot: Node3D
+var _swoosh: MeshInstance3D
+var _swoosh_mat: StandardMaterial3D
 var _swing_t := 0.0
 var _cd := 0.0
 var _hit_done := false
 var _noise_t := 0.0
 var _suppress := 0.0
+var _hitstop_gen := 0
 
 
 func suppress_attack(seconds: float) -> void:
@@ -42,6 +47,9 @@ func setup(player: PlayerController, hud: Hud, zombies: ZombieManager,
 	_noise = noise
 	_health = health
 	_visual = player.get_node("Visual") as Node3D
+	_camera_rig = player.camera_rig
+	_blood = BloodFX.new()
+	_player.add_child(_blood) # BloodFX._ready sets top_level itself
 	_build_weapon()
 
 
@@ -76,6 +84,21 @@ func _build_weapon() -> void:
 		nail.material_override = steel
 		_weapon_pivot.add_child(nail)
 	_weapon_pivot.rotation.x = 0.55 # rest: angled down-forward
+	# Swoosh streak: a thin quad in the swing plane, flashed mid-swing.
+	_swoosh_mat = StandardMaterial3D.new()
+	_swoosh_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_swoosh_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_swoosh_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	_swoosh_mat.albedo_color = Color(1, 1, 1, 0)
+	var sq := PlaneMesh.new()
+	sq.size = Vector2(0.85, 0.30)
+	_swoosh = MeshInstance3D.new()
+	_swoosh.mesh = sq
+	_swoosh.material_override = _swoosh_mat
+	_swoosh.rotation.z = PI * 0.5 # quad normal -> swing axis
+	_swoosh.position = Vector3(0.03, 0.42, 0)
+	_swoosh.visible = false
+	_weapon_pivot.add_child(_swoosh)
 
 
 func try_attack() -> void:
@@ -106,16 +129,30 @@ func _update_swing(delta: float) -> void:
 	# Raise fast, sweep through, settle back.
 	var ang := lerpf(-1.9, 0.9, ease(t, 0.6))
 	_weapon_pivot.rotation.x = ang
+	_update_swoosh(t)
 	if not _hit_done and t >= 0.45:
 		_hit_done = true
 		_apply_hit()
 	if _swing_t <= 0.0:
 		_weapon_pivot.rotation.x = 0.55
+		_swoosh.visible = false
+
+
+func _update_swoosh(t: float) -> void:
+	# Streak flashes across the middle of the swing, then fades.
+	if t > 0.20 and t < 0.78:
+		_swoosh.visible = true
+		var st := clampf((t - 0.20) / 0.58, 0.0, 1.0)
+		_swoosh_mat.albedo_color.a = 0.5 * sin(st * PI)
+	else:
+		_swoosh.visible = false
 
 
 func _apply_hit() -> void:
 	var yaw := (_visual as Node3D).rotation.y
 	var fwd := Basis(Vector3.UP, yaw) * Vector3(0, 0, -1)
+	var hit_any := false
+	var killed_any := false
 	for z in _zombies.living_zombies():
 		var to := z.global_position - _player.global_position
 		to.y = 0.0
@@ -123,7 +160,25 @@ func _apply_hit() -> void:
 			continue
 		if fwd.dot(to.normalized()) < cos(deg_to_rad(ARC_DEG)):
 			continue
-		z.take_damage(DAMAGE, _player.global_position)
+		var died: bool = z.take_damage(DAMAGE, _player.global_position)
+		_blood.burst(z.global_position + Vector3(0, 1.25, 0))
+		hit_any = true
+		killed_any = killed_any or died
+	if hit_any:
+		_do_hit_stop()
+		_camera_rig.add_trauma(0.55 if killed_any else 0.30)
+
+
+## Hit-stop: freeze the world ~70ms on connect. The timer ignores
+## time_scale so it always restores; the generation counter guards
+## against overlapping swings restoring too early.
+func _do_hit_stop() -> void:
+	_hitstop_gen += 1
+	var gen := _hitstop_gen
+	Engine.time_scale = 0.06
+	await get_tree().create_timer(0.07, true, false, true).timeout
+	if gen == _hitstop_gen:
+		Engine.time_scale = 1.0
 
 
 func _update_sprint_noise(delta: float) -> void:
