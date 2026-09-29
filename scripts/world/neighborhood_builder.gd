@@ -1180,21 +1180,21 @@ func _smoke(parent: Node3D, pos: Vector3) -> void:
 ## so the player can find home from across the neighborhood.
 func _beacon(parent: Node3D, pos: Vector3) -> void:
 	var p := GPUParticles3D.new()
-	p.amount = 36
+	p.amount = 24
 	p.lifetime = 7.0
 	p.preprocess = 7.0
 	p.visibility_aabb = AABB(Vector3(-4, -1, -4), Vector3(8, 18, 8))
 	var pm := ParticleProcessMaterial.new()
 	pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
-	pm.emission_sphere_radius = 0.5
+	pm.emission_sphere_radius = 0.6
 	pm.direction = Vector3(0, 1, 0)
-	pm.spread = 8.0
+	pm.spread = 12.0
 	pm.initial_velocity_min = 1.0
 	pm.initial_velocity_max = 1.8
 	pm.gravity = Vector3(0, 0.3, 0)
-	pm.scale_min = 1.6
-	pm.scale_max = 2.6
-	pm.color = Color(1, 1, 1, 0.28)
+	pm.scale_min = 1.8
+	pm.scale_max = 3.0
+	pm.color = Color(1, 1, 1, 0.14)
 	p.process_material = pm
 	var quad := QuadMesh.new()
 	quad.size = Vector2(1.6, 1.6)
