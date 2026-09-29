@@ -1,0 +1,325 @@
+class_name ZombieAI
+extends CharacterBody3D
+## Phase 2 walker brain: WANDER -> SUSPICIOUS -> CHASE -> ATTACK -> LOSE.
+## Vision cone + range (night: farther, wider; flashlight gives the player
+## away from much farther). Hearing via NoiseBus. Simple steering with
+## wall-slide + corner bias — no navmesh. No per-frame allocations.
+
+enum State { WANDER, SUSPICIOUS, CHASE, ATTACK, LOSE }
+
+const GRAVITY := 22.0
+const WANDER_DAY := 1.2
+const WANDER_NIGHT := 1.8
+const CHASE_DAY := 2.7
+const CHASE_NIGHT := 3.8
+const VISION_DAY := 11.0
+const VISION_NIGHT := 13.5
+const FLASHLIGHT_BONUS := 7.0
+const CONE_DAY := 75.0
+const CONE_NIGHT := 90.0
+const ATTACK_RANGE := 1.7
+const ATTACK_DAMAGE := 12.0
+const ATTACK_COOLDOWN := 1.3
+const LOSE_TIME := 4.0
+const HEAR_MULT_NIGHT := 1.4
+const MAX_HP := 100.0
+
+var state: int = State.WANDER
+var hp := MAX_HP
+var spawn_pos := Vector3.ZERO
+
+var player: PlayerController
+var player_health: PlayerHealth
+var time_manager: TimeManager
+
+var _night_f := 0.0
+var _visible := false
+var _vis_t := 0.0
+var _wander_target := Vector3.ZERO
+var _wander_t := 0.0
+var _stimulus := Vector3.ZERO
+var _look_t := 0.0
+var _last_known := Vector3.ZERO
+var _lose_t := 0.0
+var _attack_cd := 0.0
+var _attack_hit_t := -1.0
+var _wall_bias := 1.0
+var _stuck_t := 0.0
+var _stuck_pos := Vector3.ZERO
+var _dead := false
+var _dead_t := 0.0
+
+var _to := Vector3.ZERO
+var _dir := Vector3.ZERO
+
+@onready var visual: ZombieVisual = $Visual
+
+
+func _ready() -> void:
+	floor_snap_length = 0.3
+	spawn_pos = global_position
+	_wander_target = global_position
+	_vis_t = randf() * 0.2
+	_stuck_pos = global_position
+
+
+func setup(p: PlayerController, tm: TimeManager) -> void:
+	player = p
+	time_manager = tm
+	player_health = p.get_node("Health") as PlayerHealth
+
+
+func reset() -> void:
+	hp = MAX_HP
+	_dead = false
+	_dead_t = 0.0
+	state = State.WANDER
+	_visible = false
+	_lose_t = 0.0
+	_attack_cd = 0.0
+	_attack_hit_t = -1.0
+	global_position = spawn_pos
+	velocity = Vector3.ZERO
+	rotation = Vector3.ZERO
+	visible = true
+	set_physics_process(true)
+	$CollisionShape3D.disabled = false
+
+
+func on_noise(pos: Vector3, radius: float) -> void:
+	if _dead or state == State.CHASE or state == State.ATTACK:
+		return
+	var d := global_position.distance_to(pos)
+	if d < radius * lerpf(1.0, HEAR_MULT_NIGHT, _night_f):
+		_stimulus = pos
+		state = State.SUSPICIOUS
+		_look_t = 0.0
+
+
+func take_damage(amount: float, from_pos: Vector3) -> void:
+	if _dead:
+		return
+	hp -= amount
+	_to = global_position - from_pos
+	_to.y = 0.0
+	if _to.length() > 0.01:
+		velocity += _to.normalized() * 5.0
+	# Getting hit gets its attention.
+	_last_known = player.global_position if player else _last_known
+	_visible = true
+	_lose_t = 0.0
+	if hp <= 0.0:
+		_die()
+	elif state != State.CHASE and state != State.ATTACK and player:
+		state = State.CHASE
+
+
+func _die() -> void:
+	_dead = true
+	_dead_t = 1.1
+	$CollisionShape3D.disabled = true
+
+
+func _physics_process(delta: float) -> void:
+	if _dead:
+		_dead_t -= delta
+		rotation.x = lerpf(rotation.x, -PI * 0.5, 1.0 - exp(-6.0 * delta))
+		if _dead_t <= 0.0:
+			queue_free()
+		return
+	_update_night()
+	_vis_t -= delta
+	if _vis_t <= 0.0:
+		_vis_t = 0.15 + randf() * 0.1
+		_visible = _check_vision()
+	_attack_cd = maxf(0.0, _attack_cd - delta)
+
+	match state:
+		State.WANDER:
+			_do_wander(delta)
+		State.SUSPICIOUS:
+			_do_suspicious(delta)
+		State.CHASE:
+			_do_chase(delta)
+		State.ATTACK:
+			_do_attack(delta)
+		State.LOSE:
+			_do_lose(delta)
+
+	velocity.y -= GRAVITY * delta
+	if is_on_floor() and velocity.y < 0.0:
+		velocity.y = -0.5
+	move_and_slide()
+	_update_stuck(delta)
+
+	var planar := Vector2(velocity.x, velocity.z).length()
+	visual.tick(delta, planar, planar > 0.3)
+
+
+func _update_night() -> void:
+	var ang := time_manager.time_hours / 24.0 * TAU - PI * 0.5
+	_night_f = 1.0 - smoothstep(-0.06, 0.22, sin(ang))
+
+
+func _vision_range() -> float:
+	var r := lerpf(VISION_DAY, VISION_NIGHT, _night_f)
+	if _night_f > 0.5 and (1.0 - _night_f) < 0.35:
+		r += FLASHLIGHT_BONUS # flashlight gives you away at night
+	return r
+
+
+func _check_vision() -> bool:
+	if player == null or player_health == null or player_health.is_dead():
+		return false
+	_to = player.global_position - global_position
+	_to.y = 0.0
+	var dist := _to.length()
+	if dist > _vision_range():
+		return false
+	if dist > 1.2:
+		var fwd := Basis(Vector3.UP, visual.rotation.y) * Vector3(0, 0, -1)
+		var cone := lerpf(CONE_DAY, CONE_NIGHT, _night_f)
+		if fwd.dot(_to.normalized()) < cos(deg_to_rad(cone * 0.5)):
+			return false
+	# Line of sight: anything solid between us blocks it.
+	var space := get_world_3d().direct_space_state
+	var query := PhysicsRayQueryParameters3D.create(
+		global_position + Vector3(0, 1.5, 0),
+		player.global_position + Vector3(0, 1.0, 0))
+	query.exclude = [get_rid()]
+	var hit := space.intersect_ray(query)
+	return hit.is_empty() or hit["collider"] == player
+
+
+func _face(pos: Vector3) -> void:
+	_to = pos - global_position
+	if Vector2(_to.x, _to.z).length() > 0.05:
+		visual.set_target_yaw(atan2(-_to.x, -_to.z))
+
+
+func _steer(target: Vector3, speed: float) -> void:
+	_to = target - global_position
+	_to.y = 0.0
+	var dist := _to.length()
+	_dir = _to / dist if dist > 0.25 else Vector3.ZERO
+	if is_on_wall() and _dir != Vector3.ZERO:
+		var n := get_wall_normal()
+		n.y = 0.0
+		n = n.normalized()
+		# Slide along the wall + tangent bias to work around corners.
+		_dir = _dir - n * _dir.dot(n)
+		if _dir.length() < 0.2:
+			_dir = n.cross(Vector3.UP) * _wall_bias
+		else:
+			_dir = (_dir.normalized() + n.cross(Vector3.UP) * 0.6 * _wall_bias).normalized()
+	velocity.x = _dir.x * speed
+	velocity.z = _dir.z * speed
+	if _dir != Vector3.ZERO:
+		visual.set_target_yaw(atan2(-_dir.x, -_dir.z))
+
+
+func _update_stuck(delta: float) -> void:
+	_stuck_t += delta
+	if _stuck_t >= 1.0:
+		_stuck_t = 0.0
+		if global_position.distance_to(_stuck_pos) < 0.4 and state != State.ATTACK:
+			_wall_bias = -_wall_bias # try the other way around
+		_stuck_pos = global_position
+
+
+func _do_wander(delta: float) -> void:
+	if _visible:
+		state = State.CHASE
+		_last_known = player.global_position
+		_lose_t = 0.0
+		return
+	_wander_t -= delta
+	_to = _wander_target - global_position
+	_to.y = 0.0
+	if _to.length() < 1.0 or _wander_t <= 0.0:
+		_wander_target = global_position + Vector3(randf_range(-10, 10), 0, randf_range(-10, 10))
+		_wander_t = randf_range(4.0, 8.0)
+	_steer(_wander_target, lerpf(WANDER_DAY, WANDER_NIGHT, _night_f))
+
+
+func _do_suspicious(delta: float) -> void:
+	if _visible:
+		state = State.CHASE
+		_last_known = player.global_position
+		_lose_t = 0.0
+		return
+	_to = _stimulus - global_position
+	_to.y = 0.0
+	if _to.length() < 1.2:
+		# Arrived: look around, then give up.
+		_look_t += delta
+		visual.set_target_yaw(visual.rotation.y + delta * 1.2)
+		velocity.x = 0.0
+		velocity.z = 0.0
+		if _look_t > 2.5:
+			state = State.WANDER
+			_wander_t = 0.0
+	else:
+		_look_t = 0.0
+		_steer(_stimulus, lerpf(1.6, 2.2, _night_f))
+
+
+func _do_chase(delta: float) -> void:
+	if player_health.is_dead():
+		state = State.WANDER
+		return
+	if _visible:
+		_lose_t = 0.0
+		_last_known = player.global_position
+	else:
+		_lose_t += delta
+		if _lose_t > LOSE_TIME:
+			state = State.LOSE
+			return
+	var dist := Vector2(
+		player.global_position.x - global_position.x,
+		player.global_position.z - global_position.z).length()
+	if dist < ATTACK_RANGE:
+		state = State.ATTACK
+		return
+	_face(player.global_position)
+	_steer(player.global_position, lerpf(CHASE_DAY, CHASE_NIGHT, _night_f))
+
+
+func _do_attack(delta: float) -> void:
+	if player_health.is_dead():
+		state = State.WANDER
+		return
+	_face(player.global_position)
+	velocity.x = 0.0
+	velocity.z = 0.0
+	var dist := Vector2(
+		player.global_position.x - global_position.x,
+		player.global_position.z - global_position.z).length()
+	if dist > ATTACK_RANGE * 1.4:
+		state = State.CHASE
+		_attack_hit_t = -1.0
+		return
+	if _attack_cd <= 0.0:
+		_attack_cd = ATTACK_COOLDOWN
+		_attack_hit_t = 0.22
+		visual.play_lunge()
+	if _attack_hit_t > 0.0:
+		_attack_hit_t -= delta
+		if _attack_hit_t <= 0.0 and dist < ATTACK_RANGE * 1.25:
+			player_health.damage(ATTACK_DAMAGE)
+
+
+func _do_lose(delta: float) -> void:
+	if _visible:
+		state = State.CHASE
+		_last_known = player.global_position
+		_lose_t = 0.0
+		return
+	_to = _last_known - global_position
+	_to.y = 0.0
+	if _to.length() < 1.5:
+		state = State.WANDER
+		_wander_t = 0.0
+	else:
+		_steer(_last_known, lerpf(CHASE_DAY, CHASE_NIGHT, _night_f) * 0.8)

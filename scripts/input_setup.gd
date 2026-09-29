@@ -11,6 +11,16 @@ static func configure() -> void:
 	_bind("sprint", [KEY_SHIFT])
 	_bind("rotate_left", [KEY_Q])
 	_bind("rotate_right", [KEY_E])
+	_bind("attack", [KEY_SPACE])
+	# Left mouse click also attacks (desktop). Re-applied cleanly so
+	# repeated configure() calls never stack duplicate events.
+	InputMap.action_erase_events("attack")
+	var key_ev := InputEventKey.new()
+	key_ev.physical_keycode = KEY_SPACE
+	InputMap.action_add_event("attack", key_ev)
+	var mb := InputEventMouseButton.new()
+	mb.button_index = MOUSE_BUTTON_LEFT
+	InputMap.action_add_event("attack", mb)
 
 
 static func _bind(action: String, keys: Array) -> void:
