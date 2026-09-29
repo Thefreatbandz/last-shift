@@ -123,6 +123,7 @@ var _m_counter: StandardMaterial3D
 var _m_bed: StandardMaterial3D
 var _m_bedding: StandardMaterial3D
 var _m_rust_patch: StandardMaterial3D
+var _m_grime: StandardMaterial3D # dark weather grime at wall bases
 
 
 func _ready() -> void:
@@ -264,6 +265,18 @@ func _open_spot(margin := 1.0) -> Vector3:
 			continue
 		return p
 	return Vector3(road_ns_x + 10.0, 0, road_ew_z + 10.0) # fallback: near intersection
+
+
+func _open_spot_visual(margin := 1.0) -> Vector3:
+	# Cosmetic twin of _open_spot: rejection-samples open ground through
+	# the cosmetic RNG so decorative scatter (fences) never shifts the
+	# layout RNG sequence (zombie spawns, loot) or the layout hash.
+	for _i in 200:
+		var p := Vector3(_vrng.randf_range(-62, 62), 0, _vrng.randf_range(-62, 62))
+		if _on_road(p, margin) or _point_in_lots(p, margin):
+			continue
+		return p
+	return Vector3(road_ns_x + 10.0, 0, road_ew_z + 10.0)
 
 
 func _layout_zombie_spawns() -> void:
@@ -533,6 +546,7 @@ func _make_materials() -> void:
 	_m_bed = _std(Color(0.32, 0.24, 0.16), 0.85) # bed frame
 	_m_bedding = _std(Color(0.50, 0.46, 0.40), 0.95) # mattress + blanket
 	_m_rust_patch = _std(Color(0.36, 0.20, 0.10), 1.0) # rust patches
+	_m_grime = _std(Color(0.11, 0.10, 0.08), 1.0) # dark weather grime at wall bases
 
 	_m_headlight = StandardMaterial3D.new()
 	_m_headlight.albedo_color = Color(0.85, 0.82, 0.70)
@@ -574,7 +588,7 @@ func _make_materials() -> void:
 		"couch": _m_couch, "barrel": _m_barrel, "trash": _m_trash,
 		"curb": _m_curb, "crack": _m_crack, "mailbox": _m_mailbox,
 		"curtain": _m_curtain, "picture": _m_picture, "bed": _m_bed,
-		"bedding": _m_bedding,
+		"bedding": _m_bedding, "grime": _m_grime, "rust_patch": _m_rust_patch,
 	}
 
 
@@ -936,6 +950,19 @@ func _house(pos: Vector3, face: float, w: float, d: float, wall: Color, roof_c: 
 	# Foundation skirt: top sits just under the interior floor slab so the
 	# floor (not the concrete) is the visible walking surface.
 	_box(root, Vector3(w + 0.34, 0.30, d + 0.34), Vector3(0, -0.10, 0), _m_foundation)
+	# Grime band: dark weather staining on the wall bases — the apocalypse
+	# shows at the bottom of every wall. A ring of thin strips proud of
+	# the walls (front split for the door gap), so it never blocks entry.
+	# (Cosmetic: no _rng.)
+	var gz := 0.325 # grime strip center height
+	var gout := 0.16 # strip center offset from the wall plane
+	_box(root, Vector3(w + 0.08, 0.55, 0.06), Vector3(0, gz, -face * (d * 0.5) - face * gout), _m_grime)
+	_box(root, Vector3(0.06, 0.55, d + 0.08), Vector3(-w * 0.5 - gout, gz, 0), _m_grime)
+	_box(root, Vector3(0.06, 0.55, d + 0.08), Vector3(w * 0.5 + gout, gz, 0), _m_grime)
+	_box(root, Vector3(seg_w + 0.04, 0.55, 0.06),
+		Vector3(-(door_w * 0.5 + seg_w * 0.5), gz, fz + face * gout), _m_grime)
+	_box(root, Vector3(seg_w + 0.04, 0.55, 0.06),
+		Vector3(door_w * 0.5 + seg_w * 0.5, gz, fz + face * gout), _m_grime)
 	# Corner boards.
 	for cx in [-w * 0.5, w * 0.5]:
 		for cz in [-d * 0.5, d * 0.5]:
@@ -1139,6 +1166,19 @@ func _window(root: Node3D, center: Vector3, outward: Vector3, shutters: bool,
 		k1.rotation.z = 0.5
 		_box(root, Vector3(0.30, 0.28, 0.02) if along_x else Vector3(0.02, 0.28, 0.30),
 			center + Vector3(-0.25, 0.28, 0) + outward * 0.01, _m_inner)
+		# Half the smashed windows get nailed planks: the world fought back.
+		# (Cosmetic: _vrng only — layout RNG untouched.)
+		if _vrng.randf() < 0.5:
+			var bw := Vector3(1.55, 0.17, 0.07) if along_x else Vector3(0.07, 0.17, 1.55)
+			var off1 := Vector3(0, 0.28, 0)
+			var off2 := Vector3(0, -0.30, 0)
+			var p1 := _box(root, bw, center + off1 + outward * 0.14, _m_board)
+			var p2 := _box(root, bw, center + off2 + outward * 0.14, _m_board)
+			p1.rotation.z = 0.30 if along_x else 0.0
+			p2.rotation.z = -0.34 if along_x else 0.0
+			if not along_x:
+				p1.rotation.x = 0.30
+				p2.rotation.x = -0.34
 	if shutters:
 		var off := Vector3(1.02, 0, 0) if along_x else Vector3(0, 0, 1.02)
 		var shw := Vector3(0.52, 1.34, 0.06) if along_x else Vector3(0.06, 1.34, 0.52)
@@ -1503,6 +1543,8 @@ func _build_gas_station() -> void:
 		for pz in [-4.0, 4.0]:
 			_cyl(root, 0.15, 0.15, 5.0, Vector3(px, 2.5, pz), _m_pole)
 			_cyl(root, 0.22, 0.28, 0.4, Vector3(px, 0.2, pz), _m_pole) # footing
+			# Rust bands eating the pole bases. (Cosmetic: fixed geometry.)
+			_cyl(root, 0.17, 0.20, 0.55, Vector3(px, 0.55, pz), _m_rust_patch)
 	_box(root, Vector3(14, 0.5, 10), Vector3(0, 5.2, 0), canopy_mat)
 	_box(root, Vector3(14.15, 0.30, 10.15), Vector3(0, 4.90, 0), _m_canopy_edge) # fascia band
 	var pump_mat := _std(Color(0.60, 0.15, 0.12))
@@ -1510,6 +1552,9 @@ func _build_gas_station() -> void:
 		_box(root, Vector3(0.9, 1.5, 0.7), Vector3(px, 0.75, 0), pump_mat)
 		_box(root, Vector3(0.94, 0.18, 0.74), Vector3(px, 1.58, 0), _m_trim) # pump cap
 		_box(root, Vector3(0.5, 0.5, 0.1), Vector3(px, 1.1, -0.36), _m_window_dark)
+		# Rust streaks bleeding down the pump faces.
+		_box(root, Vector3(0.20, 0.85, 0.03), Vector3(px + 0.25, 0.95, 0.36), _m_rust_patch)
+		_box(root, Vector3(0.14, 0.60, 0.03), Vector3(px - 0.30, 0.80, 0.36), _m_rust_patch)
 		_solid(root, Vector3(1.0, 1.6, 0.8), Vector3(px, 0.8, 0))
 	# Kiosk with lit windows.
 	var kiosk := Vector3(9, 0, -6)
@@ -1587,6 +1632,22 @@ func _build_props() -> void:
 		var cp := _gas_pos + Vector3(12.0 + (i % 2) * 1.1, 0.4, 8.0 + i * 0.4)
 		_box(self, Vector3(0.8, 0.8, 0.8), cp, _m_wood, _rng.randf() * 0.6)
 		_box(self, Vector3(0.86, 0.1, 0.86), cp + Vector3(0, 0.36, 0), _m_trim, _rng.randf() * 0.6)
+	# Weathered plank fences: a few runs on open ground, solid so the
+	# player and zombies walk around them. (Cosmetic: _vrng +
+	# _open_spot_visual — no layout RNG, no lot registration, hash safe.)
+	for _fi in 3:
+		var froot := Node3D.new()
+		froot.position = _open_spot_visual(3.0)
+		froot.rotation.y = _vrng.randf() * TAU
+		add_child(froot)
+		var flen := _vrng.randf_range(4.0, 6.5)
+		var fposts := int(flen / 1.5) + 1
+		for pi in fposts:
+			var lx := -flen * 0.5 + float(pi) * 1.5
+			_box(froot, Vector3(0.14, 1.15, 0.14), Vector3(lx, 0.57, 0), _m_board)
+		_box(froot, Vector3(flen + 0.1, 0.12, 0.06), Vector3(0, 0.92, 0), _m_board)
+		_box(froot, Vector3(flen + 0.1, 0.12, 0.06), Vector3(0, 0.48, 0), _m_board)
+		_solid(froot, Vector3(flen + 0.2, 1.15, 0.35), Vector3(0, 0.57, 0))
 
 
 func _build_silhouettes() -> void:

@@ -55,6 +55,30 @@ var _twitch_dir := 1.0
 var _twitch_prev := 0.0
 static var _flash_mat: StandardMaterial3D = null
 
+# --- ANIMATION STATE-NAME CONTRACT -------------------------------------
+# Standard state names (from Tbandz's character animation kit). Our
+# procedural rig maps to these names; when GLB/FBX clips are imported
+# later they drop in under these names with no rewiring.
+#   idle        -> _idle_sway (breathing, blinks of variation via twitch)
+#   walk        -> _shamble (dragging asymmetric gait)
+#   run         -> _shamble at chase speed (faster phase, wider swing)
+#   attack      -> _lunge: arms-only claw swipe, body planted (0.38s)
+#   attack_2    -> (reserved: brute overhead slam variant)
+#   hit_front   -> play_hit_reaction: torso/head rock back, arms flail (0.30s)
+#   hit_back    -> (reserved: directional flinch; currently hit_front)
+#   hit_left    -> (reserved: directional flinch; currently hit_front)
+#   hit_right   -> (reserved: directional flinch; currently hit_front)
+#   stagger     -> (reserved: heavy-hit stagger; currently hit_front)
+#   crawl       -> (reserved)
+#   crawl_attack-> (reserved)
+#   turn_left   -> yaw easing in tick() (lerp_angle toward _target_yaw)
+#   turn_right  -> yaw easing in tick()
+#   fall        -> (reserved)
+#   death       -> tick_dead: crumple fold (AI lays the body flat)
+#   death_2     -> (reserved: alternate death variant)
+#   death_crawl -> (reserved)
+# -----------------------------------------------------------------------
+
 # Death crumple: folded over ~0.45s by tick_dead (called from the AI's dead
 # branch), on top of the whole-body fall-flat the AI already applies.
 var _dead_t := -1.0
@@ -396,15 +420,26 @@ func _apply_twitch(delta: float, can_trigger := true) -> void:
 
 
 func _lunge(delta: float) -> void:
-	# Snappy forward pitch, arms thrown up toward the victim.
+	# ARMS-ONLY swipe (Tbandz: "the zombie swings and kinda swung his body").
+	# The body stays planted: no forward pitch, no rock, no leg shift.
+	# Both arms wind up then claw down toward the victim on the same 0.38s
+	# envelope the AI's damage timing was tuned against (hit lands near the
+	# envelope peak). Damage, range, cooldown, AI: untouched.
 	var t := 1.0 - _lunge_t / 0.38 # 0 -> 1
 	var up := sin(t * PI) # 0 up 1 down 0
-	_body.rotation.x = 0.34 + up * 0.35
-	_arm_l.rotation.x = -0.55 - up * 0.9
-	_arm_r.rotation.x = -0.75 - up * 0.9
-	_head.rotation.x = 0.18 + up * 0.25
-	_leg_l.rotation.x = 0.3 * up
-	_leg_r.rotation.x = -0.25 * up
+	_body.rotation.x = 0.34 # base hunch, held — no rock
+	_body.rotation.z = 0.0
+	_body.position.y = 0.0 # no bob while striking
+	_arm_l.rotation.x = -0.55 - up * 1.05 # claws rake down
+	_arm_r.rotation.x = -0.75 - up * 1.05
+	_arm_l.rotation.z = 0.10 + up * 0.18 # claws spread on the strike
+	_arm_r.rotation.z = -0.14 - up * 0.18
+	_head.rotation.x = 0.18 # head held — the arms do the work
+	_head.rotation.z = 0.0
+	_leg_l.rotation.x = 0.0 # feet planted
+	_leg_r.rotation.x = 0.0
+	_shin_l.rotation.x = 0.0
+	_shin_r.rotation.x = 0.0
 	_apply_twitch(delta, false) # finish any in-flight twitch, start none
 
 

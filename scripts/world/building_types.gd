@@ -175,6 +175,29 @@ func _walls(hood: NeighborhoodBuilder, root: Node3D, face: float,
 		hood.bx_mat("floor"))
 	hood.bx_box(root, Vector3(w + 0.5, 0.5, d + 0.5), Vector3(0, -0.1, 0),
 		hood.bx_mat("foundation"))
+	# Grime ring at the wall bases + rust streaks bleeding down the facade.
+	# (Cosmetic: bx_vrng() only — layout RNG untouched.)
+	var gout := 0.16
+	hood.bx_box(root, Vector3(w + 0.08, 0.6, 0.06),
+		Vector3(0, 0.45, -fz - face * gout), hood.bx_mat("grime"))
+	hood.bx_box(root, Vector3(0.06, 0.6, d + 0.08),
+		Vector3(-w * 0.5 - gout, 0.45, 0), hood.bx_mat("grime"))
+	hood.bx_box(root, Vector3(0.06, 0.6, d + 0.08),
+		Vector3(w * 0.5 + gout, 0.45, 0), hood.bx_mat("grime"))
+	hood.bx_box(root, Vector3(seg + 0.04, 0.6, 0.06),
+		Vector3(-(door_w * 0.5 + seg * 0.5), 0.45, fz + face * gout),
+		hood.bx_mat("grime"))
+	hood.bx_box(root, Vector3(seg + 0.04, 0.6, 0.06),
+		Vector3(door_w * 0.5 + seg * 0.5, 0.45, fz + face * gout),
+		hood.bx_mat("grime"))
+	var vrng := hood.bx_vrng()
+	for _i in 3:
+		var sx := vrng.randf_range(-w * 0.5 + 1.0, w * 0.5 - 1.0)
+		if absf(sx) < door_w * 0.5 + 0.6:
+			continue # keep the doorway clear
+		hood.bx_box(root, Vector3(0.22, vrng.randf_range(0.7, 1.3), 0.04),
+			Vector3(sx, vrng.randf_range(1.0, 1.6), fz + face * (t * 0.5 + 0.03)),
+			hood.bx_mat("rust_patch"))
 
 
 ## Swinging door like the houses'. Returns the door dict consumed by HouseDoors.

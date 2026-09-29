@@ -151,12 +151,17 @@ func _spawn_float_label(pos: Vector3, text: String) -> void:
 	var l := Label3D.new()
 	l.text = text
 	l.font_size = 48
-	l.pixel_size = 0.01
+	# Constant on-screen size so close-up pickups can't balloon (same
+	# fix as the interact prompt).
+	l.fixed_size = true
+	l.pixel_size = 0.0014
 	l.modulate = Color(1.0, 0.92, 0.60)
 	l.outline_size = 10
 	l.outline_modulate = Color(0, 0, 0, 0.9)
 	l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	l.shaded = false
+	l.visibility_range_end = 10.0
+	l.visibility_range_end_margin = 3.0
 	add_child(l)
 	l.global_position = pos
 	var tw := create_tween()

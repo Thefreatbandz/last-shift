@@ -64,6 +64,29 @@ var _ik_prev := {}
 var _weapon_pivot: Node3D = null
 var _weapon_rest_x := 0.0
 
+# --- ANIMATION STATE-NAME CONTRACT -------------------------------------
+# Standard state names (from Tbandz's character animation kit). Our
+# procedural rig maps to these names; when GLB/FBX clips are imported
+# later they drop in under these names with no rewiring.
+#   idle        -> _idle (breathing, sway, blinks)
+#   walk        -> _walk at low speed
+#   run         -> _walk at high speed (phase-scaled)
+#   sprint      -> _walk at full-tilt speed (same rig, faster phase)
+#   crouch_idle -> play_kneel held (search pose doubles as crouch)
+#   crouch_walk -> (reserved)
+#   attack      -> play_attack: two-handed overhead bat swing, arms-driven
+#   reload      -> (reserved: future firearms)
+#   dodge       -> (reserved)
+#   hurt        -> play_hurt_flinch: stagger back (0.45s)
+#   land        -> (reserved)
+#   fall        -> (reserved)
+#   death       -> (handled by player death/respawn flow)
+#   interact    -> play_door_push (door open/close push)
+#   pickup      -> play_pickup (post-search grab beat)
+#   equip       -> (reserved: future weapon swaps)
+#   unequip     -> (reserved: future weapon swaps)
+# -----------------------------------------------------------------------
+
 # Materials (created once, shared across every part).
 var _m_jacket: StandardMaterial3D
 var _m_jacket_dark: StandardMaterial3D

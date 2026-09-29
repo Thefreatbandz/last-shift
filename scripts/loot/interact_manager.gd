@@ -16,12 +16,18 @@ func _ready() -> void:
 	_prompt_3d = Label3D.new()
 	_prompt_3d.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	_prompt_3d.font_size = 64
-	_prompt_3d.pixel_size = 0.008
+	# Constant on-screen size: the label can never balloon when the camera
+	# gets close (Tbandz iPhone report). Tuned via screenshot.
+	_prompt_3d.fixed_size = true
+	_prompt_3d.pixel_size = 0.0016
 	_prompt_3d.modulate = Color(1.0, 0.88, 0.55)
 	_prompt_3d.outline_size = 12
 	_prompt_3d.outline_modulate = Color(0, 0, 0, 0.85)
 	_prompt_3d.shaded = false
 	_prompt_3d.visible = false
+	# Fade out beyond ~8m so distant prompts never linger.
+	_prompt_3d.visibility_range_end = 8.0
+	_prompt_3d.visibility_range_end_margin = 3.0
 	add_child(_prompt_3d)
 
 
