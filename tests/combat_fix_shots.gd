@@ -124,20 +124,21 @@ func _process(_delta: float) -> bool:
 				_stage_combat()
 				_phase = 5
 		5:
-			# Deterministic swing poses, driven by hand.
-			_pose(0.12)
+			# Deterministic swing poses, driven by hand: wind-up peak
+			# (t=0.25), mid-strike (t=0.42), follow-through (t=0.75).
+			_pose(0.25)
 			_t0 = _now()
 			_phase = 6
 		6:
 			if _now() - _t0 > 400:
 				_shot("fix3_windup")
-				_pose(0.50)
+				_pose(0.42)
 				_t0 = _now()
 				_phase = 7
 		7:
 			if _now() - _t0 > 400:
-				_shot("fix4_midsweep")
-				_pose(0.88)
+				_shot("fix4_midstrike")
+				_pose(0.75)
 				_t0 = _now()
 				_phase = 8
 		8:

@@ -25,14 +25,21 @@ var _lunge_t := 0.0
 var _head_base_y := 0.0
 
 # --- Hit feedback (combat): flinch overlay + white/red damage flash. ---
-var _flinch_t := 0.0
+var _flinch_e := 99.0 # elapsed since flinch start; > FLINCH_TIME = inactive
 const FLINCH_TIME := 0.30
-# Snapshot-relative absolute flinch overlay: play_hit_reaction snapshots
-# every flinch channel; _apply_flinch writes snapshot + envelope * amount
-# each frame after the base pose. The shamble can write whatever it likes
-# underneath — the flinch always wins while active, can never accumulate,
-# and leaves zero residue.
-var _flinch_snap := {}
+# Additive flinch overlay via OverlayMixer: play_hit_reaction starts the
+# envelope; _apply_flinch adds pure offsets on top of the live base pose
+# each frame. An interrupting hit (or death) decays the in-flight offsets
+# over 0.2s instead of popping, and nothing can ever accumulate.
+var _mixer := OverlayMixer.new()
+# Pure base-pose values from last frame (before the flinch overlay). The
+# idle easing MUST read these, never the live nodes: the nodes carry last
+# frame's flinch offsets, and lerping those would feed the offsets back
+# into the base and amplify them. Updated every tick (see tick()).
+var _base_prev := {}
+# Lunge -> shamble crossfade: captured pose + remaining blend time.
+var _lunge_from := {}
+var _lunge_blend := 0.0
 var _flash_t := 0.0
 var _flash_on := false
 var _meshes: Array[MeshInstance3D] = []
@@ -133,28 +140,11 @@ func play_lunge() -> void:
 ## Called by ZombieAI.take_damage: quick stagger — torso rocks back, head
 ## snaps, arms flail up — blended as an overlay on top of the shamble.
 func play_hit_reaction(_from_dir: Vector3) -> void:
-	# Unwind any in-flight flinch so rapid hits can't stack residue.
-	if _flinch_t > 0.0:
-		_restore_flinch_snap()
-	_flinch_snap = {
-		"rx": _body.rotation.x, "pz": _body.position.z,
-		"head_x": _head.rotation.x,
-		"arm_l": _arm_l.rotation.x, "arm_r": _arm_r.rotation.x,
-		"arml_z": _arm_l.rotation.z, "armr_z": _arm_r.rotation.z,
-	}
-	_flinch_t = FLINCH_TIME
-
-
-func _restore_flinch_snap() -> void:
-	if _flinch_snap.is_empty():
-		return
-	_body.rotation.x = _flinch_snap["rx"]
-	_body.position.z = _flinch_snap["pz"]
-	_head.rotation.x = _flinch_snap["head_x"]
-	_arm_l.rotation.x = _flinch_snap["arm_l"]
-	_arm_r.rotation.x = _flinch_snap["arm_r"]
-	_arm_l.rotation.z = _flinch_snap["arml_z"]
-	_arm_r.rotation.z = _flinch_snap["armr_z"]
+	# Unwind any in-flight flinch: its offsets decay out over 0.2s, so
+	# rapid hits can't stack residue or pop.
+	if _flinch_e <= FLINCH_TIME:
+		_mixer.interrupt()
+	_flinch_e = 0.0
 
 
 ## Brief white/red emissive flash so the connect reads even at distance.
@@ -165,24 +155,61 @@ func flash_hit() -> void:
 
 ## Called once by ZombieAI._die: folds the body into a crumple.
 func play_death() -> void:
-	# Unwind any in-flight flinch so the corpse starts from the base pose.
-	if _flinch_t > 0.0:
-		_restore_flinch_snap()
-	_flinch_t = 0.0
+	# Unwind any in-flight flinch; its offsets decay out over 0.2s into the
+	# death pose (tick_dead keeps mixing until the residue is gone).
+	if _flinch_e <= FLINCH_TIME:
+		_mixer.interrupt()
+	_flinch_e = 99.0
 	_dead_t = 0.0
 
 
 func tick(delta: float, speed: float, moving: bool) -> void:
 	rotation.y = lerp_angle(rotation.y, _target_yaw, 1.0 - exp(-6.0 * delta))
-	if _lunge_t > 0.0:
+	var was_lunge := _lunge_t > 0.0
+	if was_lunge:
 		_lunge_t -= delta
 		_lunge(delta)
-	elif moving:
-		_shamble(delta, speed)
-	else:
-		_idle_sway(delta)
-	if _flinch_t > 0.0:
-		_apply_flinch(delta)
+		if _lunge_t <= 0.0:
+			# Final lunge frame: capture the lunge pose BEFORE the base
+			# pose below overwrites it, then crossfade into the base over
+			# 0.15s instead of snapping (the shamble phase was frozen
+			# during the lunge, so its legs would otherwise jump).
+			_lunge_from = {
+				"rx": _body.rotation.x, "rz": _body.rotation.z,
+				"leg_l": _leg_l.rotation.x, "leg_r": _leg_r.rotation.x,
+				"arm_l": _arm_l.rotation.x, "arm_r": _arm_r.rotation.x,
+				"head_x": _head.rotation.x,
+			}
+			_lunge_blend = 0.15
+	if _lunge_t <= 0.0:
+		# Base pose. Also runs on the lunge's final frame so the crossfade
+		# below has a live target to blend toward.
+		if moving:
+			_shamble(delta, speed)
+		else:
+			_idle_sway(delta)
+	if _lunge_blend > 0.0:
+		_lunge_blend -= delta
+		var w := 1.0 - smoothstep(0.0, 0.15, maxf(_lunge_blend, 0.0))
+		w = w * w * (3.0 - 2.0 * w) # smootherstep: gentler ends
+		_body.rotation.x = lerpf(_lunge_from["rx"], _body.rotation.x, w)
+		_body.rotation.z = lerpf(_lunge_from["rz"], _body.rotation.z, w)
+		_leg_l.rotation.x = lerpf(_lunge_from["leg_l"], _leg_l.rotation.x, w)
+		_leg_r.rotation.x = lerpf(_lunge_from["leg_r"], _leg_r.rotation.x, w)
+		_arm_l.rotation.x = lerpf(_lunge_from["arm_l"], _arm_l.rotation.x, w)
+		_arm_r.rotation.x = lerpf(_lunge_from["arm_r"], _arm_r.rotation.x, w)
+		_head.rotation.x = lerpf(_lunge_from["head_x"], _head.rotation.x, w)
+	# Snapshot the pure base values for next frame's idle easing BEFORE the
+	# flinch overlay is applied (see _base_prev). Every tick, flinch or not.
+	var fbase := _flinch_base()
+	_base_prev = fbase
+	if _flinch_e <= FLINCH_TIME:
+		_apply_flinch(delta, fbase)
+	elif _mixer.has_residue():
+		# The flinch ended while an older interrupt was still decaying:
+		# keep mixing with empty offsets until the residue is fully gone,
+		# so _last_total can't get stuck above zero.
+		_write_flinch(_mixer.mix(delta, fbase, {}))
 	if _flash_t > 0.0:
 		_flash_t -= delta
 		if _flash_t <= 0.0:
@@ -211,22 +238,59 @@ func tick_dead(delta: float) -> void:
 	_leg_r.rotation.x = -0.30 * e
 	_shin_l.rotation.x = -0.55 * e
 	_shin_r.rotation.x = -0.70 * e
+	# Decay any interrupted flinch residue into the death pose instead of
+	# snapping it away.
+	if _mixer.has_residue():
+		_write_flinch(_mixer.mix(delta, _flinch_base(), {}))
 
 
-func _apply_flinch(delta: float) -> void:
-	# Snapshot-relative absolute writes: snapshot + full current envelope
-	# offset. Envelope 0 -> 1 -> 0 over FLINCH_TIME; net is exactly zero.
-	_flinch_t -= delta
-	var t := clampf(1.0 - _flinch_t / FLINCH_TIME, 0.0, 1.0)
+## Last frame's pure base value for a channel (falls back to the live node
+## on the very first frame). Keeps the idle easing out of the flinch
+## overlay's feedback loop (see _base_prev).
+func _base_prev_val(ch: String, cur: float) -> float:
+	return float(_base_prev.get(ch, cur))
+
+
+## Live base-pose values for the flinch channels. The base pose never
+## writes body.position.z, so it reads as its 0.0 rest value.
+func _flinch_base() -> Dictionary:
+	return {
+		"rx": _body.rotation.x, "pz": 0.0,
+		"head_x": _head.rotation.x,
+		"arm_l": _arm_l.rotation.x, "arm_r": _arm_r.rotation.x,
+		"arml_z": _arm_l.rotation.z, "armr_z": _arm_r.rotation.z,
+	}
+
+
+func _write_flinch(d: Dictionary) -> void:
+	_body.rotation.x = d["rx"]
+	_body.position.z = d["pz"]
+	_head.rotation.x = d["head_x"]
+	_arm_l.rotation.x = d["arm_l"]
+	_arm_r.rotation.x = d["arm_r"]
+	_arm_l.rotation.z = d["arml_z"]
+	_arm_r.rotation.z = d["armr_z"]
+
+
+func _apply_flinch(delta: float, base: Dictionary) -> void:
+	# Pure envelope offsets (0 -> 1 -> 0 over FLINCH_TIME), added on top of
+	# the live base pose. The envelope is sampled BEFORE advancing, so an
+	# interrupting hit starts its new envelope at exactly 0 while the
+	# captured residue carries the continuity (no double-count, no pop).
+	# The final sample lands on t=1 (f=0), leaving _last_total at zero.
+	var t := clampf(_flinch_e / FLINCH_TIME, 0.0, 1.0)
+	_flinch_e += delta
 	var f := sin(t * PI)
-	var s := _flinch_snap
-	_body.position.z = s["pz"] + f * 0.14 # shoved BACKWARD, away from the attacker
-	_body.rotation.x = s["rx"] + f * 0.45 # torso rocks BACK, away from the attacker
-	_head.rotation.x = s["head_x"] + f * 0.55 # head snaps back
-	_arm_l.rotation.x = s["arm_l"] - f * 0.9 # arms flail
-	_arm_r.rotation.x = s["arm_r"] - f * 0.9
-	_arm_l.rotation.z = s["arml_z"] + f * 0.4
-	_arm_r.rotation.z = s["armr_z"] - f * 0.4
+	var offsets := {
+		"rx": f * 0.45, # torso rocks BACK, away from the attacker
+		"pz": f * 0.14, # shoved BACKWARD, away from the attacker
+		"head_x": f * 0.55, # head snaps back
+		"arm_l": -f * 0.9, # arms flail
+		"arm_r": -f * 0.9,
+		"arml_z": f * 0.4,
+		"armr_z": -f * 0.4,
+	}
+	_write_flinch(_mixer.mix(delta, base, offsets))
 
 
 func _set_flash(on: bool) -> void:
@@ -280,11 +344,15 @@ func _shamble(delta: float, speed: float) -> void:
 
 func _idle_sway(delta: float) -> void:
 	_phase += delta * 1.1
-	_leg_l.rotation.x = lerpf(_leg_l.rotation.x, 0.0, 0.08)
-	_leg_r.rotation.x = lerpf(_leg_r.rotation.x, 0.0, 0.08)
-	_arm_l.rotation.x = lerpf(_arm_l.rotation.x, -0.55, 0.08)
-	_arm_r.rotation.x = lerpf(_arm_r.rotation.x, -0.75, 0.08)
-	_body.rotation.x = lerpf(_body.rotation.x, 0.34, 0.08)
+	# Delta-based easing (frame-rate independent): ease toward the rest pose
+	# instead of snapping when the shamble stops. Reads last frame's PURE
+	# base values so flinch offsets can't feed back into the easing.
+	var k := 1.0 - exp(-8.0 * delta)
+	_leg_l.rotation.x = lerpf(_base_prev_val("leg_l", _leg_l.rotation.x), 0.0, k)
+	_leg_r.rotation.x = lerpf(_base_prev_val("leg_r", _leg_r.rotation.x), 0.0, k)
+	_arm_l.rotation.x = lerpf(_base_prev_val("arm_l", _arm_l.rotation.x), -0.55, k)
+	_arm_r.rotation.x = lerpf(_base_prev_val("arm_r", _arm_r.rotation.x), -0.75, k)
+	_body.rotation.x = lerpf(_base_prev_val("rx", _body.rotation.x), 0.34, k)
 	_body.rotation.z = sin(_phase) * 0.035
 	_head.rotation.z = sin(_phase * 0.7) * 0.12
 	_head.rotation.x = 0.18

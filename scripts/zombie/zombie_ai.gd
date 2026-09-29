@@ -287,7 +287,7 @@ func _face(pos: Vector3) -> void:
 		visual.set_target_yaw(atan2(-_to.x, -_to.z))
 
 
-func _steer(target: Vector3, speed: float) -> void:
+func _steer(delta: float, target: Vector3, speed: float) -> void:
 	_to = target - global_position
 	_to.y = 0.0
 	var dist := _to.length()
@@ -302,8 +302,11 @@ func _steer(target: Vector3, speed: float) -> void:
 			_dir = n.cross(Vector3.UP) * _wall_bias
 		else:
 			_dir = (_dir.normalized() + n.cross(Vector3.UP) * 0.6 * _wall_bias).normalized()
-	velocity.x = _dir.x * speed
-	velocity.z = _dir.z * speed
+	# Exponentially damped toward the desired velocity (frame-rate
+	# independent): turns and starts ramp instead of snapping.
+	var k := 1.0 - exp(-8.0 * delta)
+	velocity.x = lerpf(velocity.x, _dir.x * speed, k)
+	velocity.z = lerpf(velocity.z, _dir.z * speed, k)
 	if _dir != Vector3.ZERO:
 		visual.set_target_yaw(atan2(-_dir.x, -_dir.z))
 
@@ -329,7 +332,7 @@ func _do_wander(delta: float) -> void:
 	if _to.length() < 1.0 or _wander_t <= 0.0:
 		_wander_target = global_position + Vector3(randf_range(-10, 10), 0, randf_range(-10, 10))
 		_wander_t = randf_range(4.0, 8.0)
-	_steer(_wander_target, lerpf(WANDER_DAY, WANDER_NIGHT, _night_f) * spd_mult)
+	_steer(delta, _wander_target, lerpf(WANDER_DAY, WANDER_NIGHT, _night_f) * spd_mult)
 
 
 func _do_suspicious(delta: float) -> void:
@@ -344,14 +347,16 @@ func _do_suspicious(delta: float) -> void:
 		# Arrived: look around, then give up.
 		_look_t += delta
 		visual.set_target_yaw(visual.rotation.y + delta * 1.2)
-		velocity.x = 0.0
-		velocity.z = 0.0
+		# Eased stop instead of a hard zero: no velocity snap.
+		var stop_k := 1.0 - exp(-10.0 * delta)
+		velocity.x = lerpf(velocity.x, 0.0, stop_k)
+		velocity.z = lerpf(velocity.z, 0.0, stop_k)
 		if _look_t > 2.5:
 			state = State.WANDER
 			_wander_t = 0.0
 	else:
 		_look_t = 0.0
-		_steer(_stimulus, lerpf(1.6, 2.2, _night_f))
+		_steer(delta, _stimulus, lerpf(1.6, 2.2, _night_f))
 
 
 func _do_chase(delta: float) -> void:
@@ -373,7 +378,7 @@ func _do_chase(delta: float) -> void:
 		state = State.ATTACK
 		return
 	_face(player.global_position)
-	_steer(player.global_position, lerpf(CHASE_DAY, CHASE_NIGHT, _night_f) * spd_mult)
+	_steer(delta, player.global_position, lerpf(CHASE_DAY, CHASE_NIGHT, _night_f) * spd_mult)
 
 
 func _do_attack(delta: float) -> void:
@@ -381,8 +386,10 @@ func _do_attack(delta: float) -> void:
 		state = State.WANDER
 		return
 	_face(player.global_position)
-	velocity.x = 0.0
-	velocity.z = 0.0
+	# Eased stop while attacking: no velocity snap.
+	var atk_k := 1.0 - exp(-10.0 * delta)
+	velocity.x = lerpf(velocity.x, 0.0, atk_k)
+	velocity.z = lerpf(velocity.z, 0.0, atk_k)
 	var dist := Vector2(
 		player.global_position.x - global_position.x,
 		player.global_position.z - global_position.z).length()
@@ -415,4 +422,4 @@ func _do_lose(delta: float) -> void:
 		state = State.WANDER
 		_wander_t = 0.0
 	else:
-		_steer(_last_known, lerpf(CHASE_DAY, CHASE_NIGHT, _night_f) * 0.8 * spd_mult)
+		_steer(delta, _last_known, lerpf(CHASE_DAY, CHASE_NIGHT, _night_f) * 0.8 * spd_mult)

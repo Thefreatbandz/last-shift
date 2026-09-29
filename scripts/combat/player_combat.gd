@@ -126,7 +126,11 @@ func _build_weapon() -> void:
 	_swoosh = MeshInstance3D.new()
 	_swoosh.mesh = sq
 	_swoosh.material_override = _swoosh_mat
-	_swoosh.rotation.z = PI * 0.5 # quad normal -> swing axis
+	# Streak quad lying in the swing plane, long axis along the blade so it
+	# smears along the arc. The overhead chop rotates about the pivot's X
+	# axis (swing in the YZ plane), so the streak is rotated 90 deg about Y
+	# to put its long axis in that plane, normal along the swing axis.
+	_swoosh.rotation = Vector3(0.0, PI * 0.5, 0.0) # quad normal -> swing axis
 	_swoosh.position = Vector3(0.03, 0.42, 0)
 	_swoosh.visible = false
 	_weapon_pivot.add_child(_swoosh)
@@ -162,7 +166,9 @@ func _update_swing(delta: float) -> void:
 	_swing_t -= delta
 	var t := 1.0 - _swing_t / SWING_TIME # 0 -> 1
 	# The arm swing itself is driven by PlayerVisual's "attack" action (the
-	# bat rides in the right hand); combat only times the hit + swoosh.
+	# bat rides in the right hand, the left hand reaches a second grip point
+	# on the handle for the two-handed overhead swing); combat only times
+	# the hit + swoosh.
 	_update_swoosh(t)
 	if not _hit_done and t >= 0.45:
 		_hit_done = true

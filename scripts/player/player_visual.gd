@@ -36,12 +36,28 @@ var _head_base_y := 0.0
 var _action := ""
 var _action_t := 0.0
 var _action_dur := 1.0
-# Snapshot-relative absolute overlay: _start_action snapshots every channel
-# the actions can touch; _apply_action then writes snapshot + envelope *
-# amount each frame, AFTER the base pose. The base can write whatever it
-# likes underneath — the overlay always wins during the action, can never
-# accumulate, and leaves zero residue.
-var _snap := {}
+# Additive overlay via OverlayMixer: every frame the live base-pose values
+# are read AFTER the base ran, pure envelope offsets (0 at both ends) are
+# added, and any interrupted action's in-flight offsets decay out over 0.2s.
+# Values can never go stale, never accumulate, and interrupts crossfade
+# instead of popping.
+var _mixer := OverlayMixer.new()
+# Pure base-pose values from last frame (before any overlay). The base
+# pose's easing lerps MUST read these, never the live nodes: the nodes
+# carry last frame's overlay offsets, and lerping those would feed the
+# offsets back into the base and amplify them ~8x. Updated every tick in
+# _apply_action, before the overlay is applied.
+var _base_prev := {}
+# Two-hand grip telemetry: longest left-shoulder -> bat-handle distance seen
+# during the current swing. The arms are 0.68 long; anything above means the
+# off hand could not reach the handle (QA fails loudly on this).
+var _max_grip_d := 0.0
+# Stabilized IK solution from last frame. The raw two-bone solution can
+# flip branches mid-swing (several radians in one frame) when the handle
+# target swings past the pole; clamping the solution's per-frame change
+# keeps the off hand's motion continuous (it tracks with a slight lag
+# through the fastest part of the strike, which reads naturally).
+var _ik_prev := {}
 
 # Nail bat mount: combat hands us the weapon pivot; it rides in the right
 # hand (forearm child) so the swing is genuinely arms-driven.
@@ -146,159 +162,283 @@ func attach_weapon(pivot: Node3D) -> void:
 
 
 func _start_action(name: String, dur: float) -> void:
-	# Switching mid-envelope: restore the old snapshot first so the new
-	# action starts from clean base values (no residue, no stacking).
+	# Switching mid-envelope: the interrupted action's in-flight offsets
+	# were captured from what was actually written last frame, so the new
+	# action crossfades over 0.2s instead of popping.
 	if _action != "":
-		_restore_snap()
-	_snap = _snap_channels()
+		_mixer.interrupt()
 	_action = name
 	_action_t = 0.0
 	_action_dur = dur
+	if name == "attack":
+		_ik_prev = {} # fresh swing, fresh IK tracking
+		_max_grip_d = 0.0
+	if name == "attack":
+		_max_grip_d = 0.0
 
 
-func _snap_channels() -> Dictionary:
+## Live base-pose channel values, read AFTER the base pose ran this frame.
+## Channels the base never writes read as 0.0 (their rest value), so the
+## offsets below stay pure additions.
+func _read_base() -> Dictionary:
 	return {
-		"py": _body.position.y, "pz": _body.position.z,
-		"rx": _body.rotation.x, "rz": _body.rotation.z,
+		"py": _body.position.y, "pz": 0.0,
+		"rx": _body.rotation.x, "ry": 0.0, "rz": _body.rotation.z,
 		"leg_l": _leg_l.rotation.x, "leg_r": _leg_r.rotation.x,
 		"shin_l": _shin_l.rotation.x, "shin_r": _shin_r.rotation.x,
 		"arm_l": _arm_l.rotation.x, "arm_r": _arm_r.rotation.x,
 		"fore_l": _fore_l.rotation.x, "fore_r": _fore_r.rotation.x,
-		"head_x": _head.rotation.x, "head_z": _head.rotation.z,
-		"arml_z": _arm_l.rotation.z, "armr_z": _arm_r.rotation.z,
+		"head_x": _head.rotation.x, "head_z": 0.0,
+		"arml_z": 0.0, "armr_z": 0.0,
+		"batx": 0.0, "batz": 0.0,
 	}
 
 
-func _restore_snap() -> void:
-	if _snap.is_empty():
-		return
-	_body.position.y = _snap["py"]
-	_body.position.z = _snap["pz"]
-	_body.rotation.x = _snap["rx"]
-	_body.rotation.z = _snap["rz"]
-	_leg_l.rotation.x = _snap["leg_l"]
-	_leg_r.rotation.x = _snap["leg_r"]
-	_shin_l.rotation.x = _snap["shin_l"]
-	_shin_r.rotation.x = _snap["shin_r"]
-	_arm_l.rotation.x = _snap["arm_l"]
-	_arm_r.rotation.x = _snap["arm_r"]
-	_fore_l.rotation.x = _snap["fore_l"]
-	_fore_r.rotation.x = _snap["fore_r"]
-	_head.rotation.x = _snap["head_x"]
-	_head.rotation.z = _snap["head_z"]
-	_arm_l.rotation.z = _snap["arml_z"]
-	_arm_r.rotation.z = _snap["armr_z"]
-	_body.rotation.y = 0.0
+func _write_channels(d: Dictionary) -> void:
+	_body.position.y = d["py"]
+	_body.position.z = d["pz"]
+	_body.rotation.x = d["rx"]
+	_body.rotation.y = d["ry"]
+	_body.rotation.z = d["rz"]
+	_leg_l.rotation.x = d["leg_l"]
+	_leg_r.rotation.x = d["leg_r"]
+	_shin_l.rotation.x = d["shin_l"]
+	_shin_r.rotation.x = d["shin_r"]
+	_arm_l.rotation.x = d["arm_l"]
+	_arm_r.rotation.x = d["arm_r"]
+	_fore_l.rotation.x = d["fore_l"]
+	_fore_r.rotation.x = d["fore_r"]
+	_head.rotation.x = d["head_x"]
+	_head.rotation.z = d["head_z"]
+	_arm_l.rotation.z = d["arml_z"]
+	_arm_r.rotation.z = d["armr_z"]
 	if _weapon_pivot != null:
-		_weapon_pivot.rotation.x = _weapon_rest_x
+		_weapon_pivot.rotation.x = _weapon_rest_x + d["batx"]
+		_weapon_pivot.rotation.z = d["batz"]
+
+
+## Last frame's pure base value for a channel (falls back to the live node
+## on the very first frame). Keeps base-pose easing out of the overlay's
+## feedback loop (see _base_prev).
+func _base_prev_val(ch: String, cur: float) -> float:
+	return float(_base_prev.get(ch, cur))
 
 
 func _apply_action(delta: float) -> void:
-	if _action == "":
+	# Snapshot the pure base values for next frame's easing BEFORE the
+	# overlay is applied (see _base_prev). This runs every tick, even with
+	# no action active, so the easing never reads stale data.
+	var base := _read_base()
+	_base_prev = base
+	# Keep mixing while an interrupted action's residue decays, even after
+	# the action itself finished.
+	if _action == "" and not _mixer.has_residue():
 		return
-	_action_t += delta
-	var t := clampf(_action_t / _action_dur, 0.0, 1.0)
-	if _action == "attack":
-		_apply_attack(t)
-	else:
-		var e: float
-		if _action == "kneel":
-			# Ease in, hold through the search, ease out at the end.
-			e = smoothstep(0.0, 0.25, t) * (1.0 - smoothstep(0.8, 1.0, t))
+	var offsets := {}
+	if _action != "":
+		_action_t += delta
+		var t := clampf(_action_t / _action_dur, 0.0, 1.0)
+		if _action == "attack":
+			offsets = _attack_offsets(t)
 		else:
-			e = sin(t * PI) # smooth in/out one-shot
-		_apply_overlay(_action, e)
-	if t >= 1.0:
-		# Envelope is back at zero, so the last writes equal the snapshot;
-		# the base pose takes over from here with nothing left behind.
-		_action = ""
+			var e: float
+			if _action == "kneel":
+				# Ease in, hold through the search, ease out at the end.
+				e = smoothstep(0.0, 0.25, t) * (1.0 - smoothstep(0.8, 1.0, t))
+			else:
+				e = sin(t * PI) # smooth in/out one-shot
+			offsets = _overlay_offsets(_action, e)
+		if t >= 1.0:
+			# Envelope is back at zero, so the last writes equal the live
+			# base; the base pose takes over from here with nothing left.
+			_action = ""
+	_write_channels(_mixer.mix(delta, base, offsets))
 
 
-## One-shot overlay channels. `d` is the envelope delta for this frame;
-## every line is `+= d * amount` (or an absolute the base never writes),
-## so interrupting or finishing an action leaves zero residue.
-func _apply_overlay(action: String, e: float) -> void:
-	# Snapshot-relative absolute writes: each channel is the snapshot value
-	# plus the full current envelope offset. The base pose already ran this
-	# frame; the overlay wins on its channels and can never accumulate.
-	var s := _snap
+## One-shot overlay channels as pure offsets: every value is 0 at both ends
+## of its envelope, so interrupting or finishing an action leaves nothing
+## behind (the mixer decays any residue).
+func _overlay_offsets(action: String, e: float) -> Dictionary:
+	var o := {}
 	match action:
 		"kneel":
 			# Drop is tuned so the folded legs keep the feet planted: the
 			# visual must never sink through the floor.
-			_body.position.y = s["py"] - 0.26 * e
-			_body.rotation.x = s["rx"] + 0.18 * e
-			_leg_l.rotation.x = s["leg_l"] - 0.90 * e
-			_leg_r.rotation.x = s["leg_r"] - 0.90 * e
-			_shin_l.rotation.x = s["shin_l"] + 1.40 * e
-			_shin_r.rotation.x = s["shin_r"] + 1.40 * e
-			_arm_l.rotation.x = s["arm_l"] + 0.55 * e # reach forward into the chest
-			_arm_r.rotation.x = s["arm_r"] + 0.55 * e
+			o["py"] = -0.26 * e
+			o["rx"] = 0.18 * e
+			o["leg_l"] = -0.90 * e
+			o["leg_r"] = -0.90 * e
+			o["shin_l"] = 1.40 * e
+			o["shin_r"] = 1.40 * e
+			o["arm_l"] = 0.55 * e # reach forward into the chest
+			o["arm_r"] = 0.55 * e
 		"pickup":
 			# Bow forward over the chest and grab: slight crouch keeps the
 			# feet planted (no floor penetration), torso bends forward.
-			_body.rotation.x = s["rx"] - 0.30 * e
-			_body.position.y = s["py"] - 0.06 * e
-			_leg_l.rotation.x = s["leg_l"] + 0.35 * e
-			_leg_r.rotation.x = s["leg_r"] + 0.35 * e
-			_shin_l.rotation.x = s["shin_l"] - 0.55 * e
-			_shin_r.rotation.x = s["shin_r"] - 0.55 * e
-			_arm_l.rotation.x = s["arm_l"] + 0.95 * e
-			_arm_r.rotation.x = s["arm_r"] + 0.95 * e
-			_head.rotation.x = s["head_x"] - 0.25 * e
+			o["rx"] = -0.30 * e
+			o["py"] = -0.06 * e
+			o["leg_l"] = 0.35 * e
+			o["leg_r"] = 0.35 * e
+			o["shin_l"] = -0.55 * e
+			o["shin_r"] = -0.55 * e
+			o["arm_l"] = 0.95 * e
+			o["arm_r"] = 0.95 * e
+			o["head_x"] = -0.25 * e
 		"eat":
-			_arm_r.rotation.x = s["arm_r"] - 1.35 * e
-			_fore_r.rotation.x = s["fore_r"] - 0.90 * e
-			_head.rotation.x = s["head_x"] + 0.18 * e
+			o["arm_r"] = -1.35 * e
+			o["fore_r"] = -0.90 * e
+			o["head_x"] = 0.18 * e
 		"door":
-			_arm_l.rotation.x = s["arm_l"] - 1.15 * e
-			_arm_r.rotation.x = s["arm_r"] - 1.15 * e
-			_body.rotation.x = s["rx"] + 0.28 * e
-			_body.position.z = s["pz"] - 0.12 * e
+			o["arm_l"] = -1.15 * e
+			o["arm_r"] = -1.15 * e
+			o["rx"] = 0.28 * e
+			o["pz"] = -0.12 * e
 		"hurt":
 			# Stagger BACK away from the attacker: positive rotation.x rocks
 			# the torso toward +Z (behind a -Z-facing character).
-			_body.rotation.z = s["rz"] + 0.28 * e
-			_body.rotation.x = s["rx"] + 0.18 * e
-			_head.rotation.z = s["head_z"] + 0.30 * e
-			_arm_l.rotation.z = s["arml_z"] + 0.50 * e
-			_arm_r.rotation.z = s["armr_z"] - 0.50 * e
+			o["rz"] = 0.28 * e
+			o["rx"] = 0.18 * e
+			o["head_z"] = 0.30 * e
+			o["arml_z"] = 0.50 * e
+			o["armr_z"] = -0.50 * e
+	return o
 
 
-## Arm pose for the bat swing at envelope t. Returns OFFSET angles added onto
-## the snapshot pose; pose(0) == pose(1) on every channel so a full swing
-## leaves zero residue.
-func _attack_pose(t: float) -> Dictionary:
-	var wind := smoothstep(0.0, 0.35, t)
-	var sweep := smoothstep(0.35, 0.62, t)
-	var relax := smoothstep(0.62, 1.0, t)
-	var shoulder := lerpf(lerpf(0.0, -1.05, wind), 1.35, sweep)
-	shoulder = lerpf(shoulder, 0.0, relax)
-	var elbow := lerpf(lerpf(-0.15, -1.15, wind), -0.25, sweep)
-	elbow = lerpf(elbow, -0.15, relax)
-	var offarm := lerpf(lerpf(0.0, 0.40, wind), -0.30, sweep)
-	offarm = lerpf(offarm, 0.0, relax)
-	var twist := lerpf(lerpf(0.0, -0.30, wind), 0.28, sweep)
-	twist = lerpf(twist, 0.0, relax)
-	var snap := lerpf(lerpf(0.0, 0.30, wind), -0.50, sweep)
-	snap = lerpf(snap, 0.0, relax)
-	return {"shoulder": shoulder, "elbow": elbow, "offarm": offarm,
-			"twist": twist, "snap": snap}
+## TWO-HANDED OVERHEAD bat swing. Both arms lift the bat above/behind the
+## head (left hand reaching to a second grip point down the handle), then the
+## arms drive the bat down through an overhead arc to the strike point in
+## front, then relax. The torso stays planted (legs bend, no lunge, no
+## forward pitch) and the pose returns to zero on every channel by t=1.
+func _attack_offsets(t: float) -> Dictionary:
+	var wind := smoothstep(0.0, 0.25, t)
+	var strike := smoothstep(0.25, 0.48, t)
+	var relax := smoothstep(0.55, 1.0, t)
+	var sh_x := lerpf(lerpf(0.0, 3.05, wind), 0.62, strike)
+	sh_x = lerpf(sh_x, 0.0, relax)
+	var sh_z := lerpf(lerpf(0.0, -0.38, wind), -0.34, strike)
+	sh_z = lerpf(sh_z, 0.0, relax)
+	var elb := lerpf(lerpf(0.0, 0.40, wind), 0.06, strike)
+	elb = lerpf(elb, 0.0, relax)
+	var whip := lerpf(lerpf(0.0, -0.90, wind), 0.35, strike)
+	whip = lerpf(whip, 0.0, relax)
+	var bz := lerpf(lerpf(0.0, 0.25, wind), 0.06, strike)
+	bz = lerpf(bz, 0.0, relax)
+	var se := strike * (1.0 - relax) # body envelope: engaged during the strike
+	var o := {
+		"arm_r": sh_x,
+		"armr_z": sh_z,
+		"fore_r": elb,
+		"batx": whip,
+		"batz": bz,
+		"py": -0.06 * se,
+		"leg_l": 0.22 * se,
+		"leg_r": 0.22 * se,
+		"shin_l": -0.30 * se,
+		"shin_r": -0.30 * se,
+		"ry": lerpf(lerpf(lerpf(0.0, -0.10, wind), 0.08, strike), 0.0, relax),
+	}
+	# Off-hand reach: the left arm is aimed with two-bone IK at a second
+	# grip point on the bat handle. The bat rides on the right forearm, so
+	# the handle point is derived from the right arm's posed chain here.
+	var grip := lerpf(-0.20, -0.16, strike)
+	var grip_w := smoothstep(0.0, 0.12, t) * (1.0 - smoothstep(0.88, 1.0, t))
+	# The off hand travels up WITH the wind-up: gating its IK correction by
+	# the wind envelope keeps the first frames from popping (a ~2 rad
+	# correction applied in one frame) and reads as the hand coming up to
+	# meet the bat.
+	var lw := grip_w * wind
+	var reach := _solve_left_grip(sh_x, sh_z, elb, whip, bz, grip, grip_w)
+	# angle_difference: the IK solution is continuous as a rotation, but
+	# atan2/asin wrap at +/-PI. Correcting via the shortest path keeps the
+	# arm from spinning the long way around when the solution crosses the
+	# branch cut mid-swing. _stabilize_ik additionally clamps the solution
+	# itself so a branch flip can't teleport the hand.
+	var thx := _stabilize_ik("thx", reach["thx"])
+	var phz := _stabilize_ik("phz", reach["phz"])
+	var elb2 := _stabilize_ik("elb", reach["elb"])
+	o["arm_l"] = angle_difference(_arm_l.rotation.x, thx) * lw
+	o["arml_z"] = angle_difference(_arm_l.rotation.z, phz) * lw
+	o["fore_l"] = angle_difference(_fore_l.rotation.x, elb2) * lw
+	return o
 
 
-## ARMS-DRIVEN bat swing: the shoulder/elbow carry the weapon (it rides in
-## the right hand). Wind up, sweep through, follow through. Arm channels are
-## snapshot-relative (no accumulation); the torso twists slightly with the
-## swing; the body never lunges or pitches forward into the zombie.
-func _apply_attack(t: float) -> void:
-	var pose := _attack_pose(t)
-	var s := _snap
-	_arm_r.rotation.x = s["arm_r"] + pose["shoulder"]
-	_fore_r.rotation.x = s["fore_r"] + pose["elbow"]
-	_arm_l.rotation.x = s["arm_l"] + pose["offarm"]
-	_body.rotation.y = pose["twist"]
-	if _weapon_pivot != null:
-		_weapon_pivot.rotation.x = _weapon_rest_x + pose["snap"]
+## Clamp a per-frame IK solution change to +/-0.5 rad: the raw two-bone
+## solution can flip branches (multi-radian teleport) when the handle
+## target swings past the pole vector mid-strike. The hand tracks the
+## stabilized solution with a slight lag instead of snapping.
+func _stabilize_ik(key: String, raw: float) -> float:
+	var prev: float = float(_ik_prev.get(key, raw))
+	var v := prev + clampf(angle_difference(prev, raw), -0.5, 0.5)
+	_ik_prev[key] = v
+	return v
+
+
+## Aim the left arm at a handle point on the bat with two-bone IK.
+## Returns the absolute shoulder x / z-tilt / elbow angles that put the
+## left hand on the grip. `grip` is the handle offset from the right hand
+## along the bat's +Y (tip direction); negative = down toward the pommel.
+## Also records _max_grip_d (longest TRUE shoulder->grip distance seen while
+## the off hand is engaged) for the two-hand QA check. At rest the handle
+## is legitimately out of reach, so only the engaged region is tracked.
+func _solve_left_grip(sh_x: float, sh_z: float, elb: float,
+		whip: float, bz: float, grip: float, grip_w: float) -> Dictionary:
+	var S_r := Vector3(0.26, 1.47, 0.0) # right shoulder, _body space
+	var S_l := Vector3(-0.26, 1.47, 0.0) # left shoulder, _body space
+	var L1 := 0.31
+	var L2 := 0.37
+	var R_arm := Basis(Vector3.RIGHT, sh_x) * Basis(Vector3(0, 0, 1), sh_z)
+	var E := S_r + (R_arm * Vector3(0, -1, 0)) * L1
+	var R_fore := R_arm * Basis(Vector3.RIGHT, elb)
+	var H := E + (R_fore * Vector3(0, -0.37, -0.04))
+	var R_bat := R_fore * Basis(Vector3.RIGHT, _weapon_rest_x + whip) \
+		* Basis(Vector3(0, 0, 1), bz)
+	var bdir := (R_bat * Vector3(0, 1, 0)).normalized()
+	var G := H + bdir * grip
+	var D := G - S_l
+	var d_true := D.length()
+	if grip_w > 0.5:
+		_max_grip_d = maxf(_max_grip_d, d_true)
+	var d := clampf(d_true, 0.25, L1 + L2 - 0.02)
+	var dn := D / d_true
+	# Elbow bend from the law of cosines; the pole keeps the elbow pointing
+	# out-left instead of folding into the ribs.
+	var cosA := clampf((L1 * L1 + d * d - L2 * L2) / (2.0 * L1 * d), -1.0, 1.0)
+	var A := acos(cosA)
+	var pole := Vector3(-0.75, 0.30, 0.50).normalized()
+	var axis := dn.cross(pole)
+	if axis.length() < 0.05:
+		axis = Vector3.RIGHT
+	else:
+		axis = axis.normalized()
+	var upper := (Basis(axis, A) * dn).normalized()
+	var El := S_l + upper * L1
+	var v := (G - El).normalized()
+	# Shoulder aim: R = Rx(thx) * Rz(phz), R * (0,-1,0) = upper.
+	var phz := asin(clampf(upper.x, -1.0, 1.0))
+	phz = clampf(phz, -1.4, 1.4)
+	var thx := atan2(-upper.z, -upper.y)
+	# Elbow bend about the arm's local X, signed by the bend-plane normal.
+	var B := acos(clampf(upper.dot(v), -1.0, 1.0))
+	var local_x := Vector3(cos(phz), cos(thx) * sin(phz), sin(thx) * sin(phz))
+	var sgn := signf((upper.cross(v)).dot(local_x))
+	if sgn == 0.0:
+		sgn = 1.0
+	return {"thx": thx, "phz": phz, "elb": sgn * B}
+
+
+## Bat tip position in _body space, derived from the CURRENT posed angles.
+## Used by QA to verify a genuine overhead wind-up and downward strike arc.
+func bat_tip_body() -> Vector3:
+	var S_r := Vector3(0.26, 1.47, 0.0)
+	var R_arm := Basis(Vector3.RIGHT, _arm_r.rotation.x) \
+		* Basis(Vector3(0, 0, 1), _arm_r.rotation.z)
+	var E := S_r + (R_arm * Vector3(0, -1, 0)) * 0.31
+	var R_fore := R_arm * Basis(Vector3.RIGHT, _fore_r.rotation.x)
+	var H := E + (R_fore * Vector3(0, -0.37, -0.04))
+	var R_bat := R_fore * Basis(Vector3.RIGHT, _weapon_pivot.rotation.x) \
+		* Basis(Vector3(0, 0, 1), _weapon_pivot.rotation.z)
+	return H + (R_bat * Vector3(0, 1, 0)).normalized() * 0.45
+
 
 
 func _walk(delta: float, speed: float, k: float) -> void:
@@ -327,7 +467,7 @@ func _walk(delta: float, speed: float, k: float) -> void:
 	_body.rotation.z = s * 0.035 * intensity
 	# Head stays level: counter-bob, slight forward pitch at speed.
 	_head.position.y = _head_base_y - bob * 0.35
-	_head.rotation.x = lerpf(_head.rotation.x, 0.06 * intensity, k)
+	_head.rotation.x = lerpf(_base_prev_val("head_x", _head.rotation.x), 0.06 * intensity, k)
 	_head.rotation.y = lerpf(_head.rotation.y, 0.0, k)
 	_torso.scale.y = 1.0
 
@@ -336,16 +476,16 @@ func _idle(delta: float, k: float) -> void:
 	_idle_t += delta
 	var b := sin(_idle_t * 2.0)
 	var sway := sin(_idle_t * 0.9)
-	_leg_l.rotation.x = lerpf(_leg_l.rotation.x, 0.0, k)
-	_leg_r.rotation.x = lerpf(_leg_r.rotation.x, 0.0, k)
-	_shin_l.rotation.x = lerpf(_shin_l.rotation.x, 0.0, k)
-	_shin_r.rotation.x = lerpf(_shin_r.rotation.x, 0.0, k)
-	_arm_l.rotation.x = lerpf(_arm_l.rotation.x, b * 0.03, k)
-	_arm_r.rotation.x = lerpf(_arm_r.rotation.x, -b * 0.03, k)
-	_fore_l.rotation.x = lerpf(_fore_l.rotation.x, -0.12, k)
-	_fore_r.rotation.x = lerpf(_fore_r.rotation.x, -0.12, k)
+	_leg_l.rotation.x = lerpf(_base_prev_val("leg_l", _leg_l.rotation.x), 0.0, k)
+	_leg_r.rotation.x = lerpf(_base_prev_val("leg_r", _leg_r.rotation.x), 0.0, k)
+	_shin_l.rotation.x = lerpf(_base_prev_val("shin_l", _shin_l.rotation.x), 0.0, k)
+	_shin_r.rotation.x = lerpf(_base_prev_val("shin_r", _shin_r.rotation.x), 0.0, k)
+	_arm_l.rotation.x = lerpf(_base_prev_val("arm_l", _arm_l.rotation.x), b * 0.03, k)
+	_arm_r.rotation.x = lerpf(_base_prev_val("arm_r", _arm_r.rotation.x), -b * 0.03, k)
+	_fore_l.rotation.x = lerpf(_base_prev_val("fore_l", _fore_l.rotation.x), -0.12, k)
+	_fore_r.rotation.x = lerpf(_base_prev_val("fore_r", _fore_r.rotation.x), -0.12, k)
 	_body.position.y = b * 0.012
-	_body.rotation.x = lerpf(_body.rotation.x, -0.02, k)
+	_body.rotation.x = lerpf(_base_prev_val("rx", _body.rotation.x), -0.02, k)
 	_body.rotation.z = sway * 0.012
 	_head.position.y = _head_base_y + b * 0.004
 	_head.rotation.x = lerpf(_head.rotation.x, 0.0, k)
