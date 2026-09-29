@@ -32,3 +32,4 @@ environment/defaults/default_clear_color=Color(0.01, 0.015, 0.03, 1)
 [autoload]
 
 Sound="*res://scripts/audio/audio_manager.gd"
+RunState="*res://scripts/world/run_state.gd"

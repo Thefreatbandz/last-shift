@@ -9,16 +9,9 @@ const ZOMBIE_SCENE := preload("res://scenes/zombie/zombie.tscn")
 const PACK_SIZE := 6
 const SEPARATION_DIST := 1.6
 
-# Scatter points: streets and lots, clear of houses/cars/fences, away from
-# the player spawn at (-6, -10).
-const SPAWNS := [
-	Vector3(-40, 0.3, -6),
-	Vector3(-18, 0.3, 10),
-	Vector3(10, 0.3, -6),
-	Vector3(-52, 0.3, 16),
-	Vector3(16, 0.3, 14),
-	Vector3(-30, 0.3, -4),
-]
+# Scatter points: supplied by the seeded neighborhood — open ground, away
+# from the player start and the safehouse porch. Exactly PACK_SIZE entries.
+var _spawns: Array[Vector3] = []
 
 var zombies: Array[ZombieAI] = []
 
@@ -39,10 +32,12 @@ func set_ward(center: Vector3, radius: float) -> void:
 	_ward_radius = radius
 
 
-func setup(player: PlayerController, tm: TimeManager, noise: NoiseBus) -> void:
+func setup(player: PlayerController, tm: TimeManager, noise: NoiseBus,
+		spawns: Array[Vector3]) -> void:
 	_player = player
 	_time_manager = tm
 	_noise = noise
+	_spawns = spawns
 	_noise.noise_emitted.connect(_on_noise)
 	_spawn_pack()
 
@@ -51,7 +46,8 @@ func _spawn_pack() -> void:
 	for i in PACK_SIZE:
 		var z := ZOMBIE_SCENE.instantiate() as ZombieAI
 		add_child(z)
-		z.global_position = SPAWNS[i % SPAWNS.size()]
+		if _spawns.size() > i:
+			z.global_position = _spawns[i]
 		z.setup(_player, _time_manager)
 		zombies.append(z)
 

@@ -9,6 +9,7 @@ var items: Dictionary = {} # id -> int
 var stash: Dictionary = {} # id -> int
 
 var health: PlayerHealth
+var survival: SurvivalStats # set by main; food/water restore meters
 
 
 func count(id: String) -> int:
@@ -32,18 +33,34 @@ func remove(id: String, n: int = 1) -> bool:
 	return true
 
 
-## Consume one usable item (food / meds). Returns false if wasted or missing.
+## Consume one usable item. Food restores hunger, water restores thirst,
+## meds heal HP. Each refuses when its target stat is already full.
+## Returns false if wasted or missing.
 func use(id: String) -> bool:
 	if not LootDefs.is_usable(id) or count(id) <= 0:
 		return false
 	if health == null or health.is_dead():
 		return false
-	if health.hp >= PlayerHealth.MAX_HP:
-		return false
+	match id:
+		LootDefs.CANNED_FOOD:
+			if survival == null or survival.hunger >= SurvivalStats.MAX:
+				return false
+		LootDefs.WATER:
+			if survival == null or survival.thirst >= SurvivalStats.MAX:
+				return false
+		_:
+			if health.hp >= PlayerHealth.MAX_HP:
+				return false
 	if not remove(id, 1):
 		return false
-	health.heal(float(LootDefs.item_heal(id)))
-	Sound.play("eat")
+	match id:
+		LootDefs.CANNED_FOOD:
+			survival.eat_food()
+		LootDefs.WATER:
+			survival.drink_water()
+		_:
+			health.heal(float(LootDefs.item_heal(id)))
+			Sound.play("eat")
 	return true
 
 

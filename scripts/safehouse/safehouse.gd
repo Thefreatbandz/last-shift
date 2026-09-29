@@ -9,8 +9,10 @@ extends Node3D
 signal claimed_house
 signal slept
 
-const DOOR_POS := Vector3(-6, 0, -16.46) # boarded house front door, world space
-const PORCH := Vector3(-6, 0, -13.0)
+# Set by the bootstrap from the seeded neighborhood (the safehouse house
+# moves per world seed — these are NOT fixed anymore).
+var door_pos := Vector3.ZERO # world-space front door of the safehouse
+var porch := Vector3.ZERO # world-space porch: player start, respawn, ward
 
 var claimed := false
 
@@ -28,6 +30,7 @@ var _stash_panel: StashPanel
 
 var _claim_id := -1
 var _sleeping := false
+var survival: SurvivalStats # set by main; sleep costs hunger/thirst
 var _props: Node3D
 var _bench: Node3D
 var _chest: Node3D
@@ -56,7 +59,13 @@ func setup(p: PlayerController, visual: PlayerVisual, inv: Inventory,
 	_hood = hood
 	_interact = interact
 	_mats()
-	global_position = DOOR_POS
+	global_position = door_pos
+	# Face the porch (local +Z is the porch side): the safehouse door can
+	# face either way per world seed.
+	var to_porch := porch - door_pos
+	to_porch.y = 0.0
+	if to_porch.length_squared() > 0.001:
+		rotation.y = atan2(to_porch.x, to_porch.z)
 	_claim_id = _interact.register(self, "CLAIM SAFEHOUSE", 3.2, claim)
 	_build_props()
 	_props.visible = false
@@ -150,7 +159,7 @@ func claim() -> void:
 	if claimed:
 		return
 	claimed = true
-	Sound.play_3d("door", DOOR_POS) # old hinges as the boards start to fall
+	Sound.play_3d("door", door_pos) # old hinges as the boards start to fall
 	_visual.play_door_push()
 	_interact.set_enabled(_claim_id, false)
 	# Boards clatter to the ground, staggered.
@@ -195,7 +204,7 @@ func claim() -> void:
 	var ptw := create_tween()
 	ptw.tween_interval(1.2)
 	ptw.tween_callback(_reveal_props)
-	_health.set_respawn(PORCH + Vector3(0, 0.3, 0))
+	_health.set_respawn(porch + Vector3(0, 0.3, 0))
 	claimed_house.emit()
 
 
@@ -238,10 +247,15 @@ func sleep() -> void:
 		return
 	if _tm.time_hours >= 7.0:
 		_tm.day += 1
+	var slept_hours := 7.0 - _tm.time_hours
+	if slept_hours < 0.0:
+		slept_hours += 24.0
 	_tm.time_hours = 7.0
+	if survival != null:
+		survival.on_sleep(slept_hours) # you wake up hungry and thirsty
 	_health.heal(999.0)
 	_zombies.reset_all()
-	_player.global_position = PORCH + Vector3(0, 0.3, 0)
+	_player.global_position = porch + Vector3(0, 0.3, 0)
 	_hud.fade_to_black(false)
 	_hud.show_slept_teaser()
 	_sleeping = false
@@ -261,4 +275,4 @@ func build_barricade() -> void:
 		var m := _box(_props, s[1] as Vector3, s[0] as Vector3, wall_mat)
 		m.rotation.y = float(s[2])
 		_solid(_props, s[1] as Vector3, s[0] as Vector3) # barricades block, not just decor
-	_zombies.set_ward(PORCH, 13.0)
+	_zombies.set_ward(porch, 13.0)

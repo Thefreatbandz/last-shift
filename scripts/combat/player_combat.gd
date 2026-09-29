@@ -20,6 +20,7 @@ var _hud: Hud
 var _zombies: ZombieManager
 var _noise: NoiseBus
 var _health: PlayerHealth
+var _survival: SurvivalStats
 var _visual: Node3D
 var _blood: BloodFX
 var _camera_rig: CameraRig
@@ -69,12 +70,13 @@ func suppress_attack(seconds: float) -> void:
 
 
 func setup(player: PlayerController, hud: Hud, zombies: ZombieManager,
-		noise: NoiseBus, health: PlayerHealth) -> void:
+		noise: NoiseBus, health: PlayerHealth, survival: SurvivalStats) -> void:
 	_player = player
 	_hud = hud
 	_zombies = zombies
 	_noise = noise
 	_health = health
+	_survival = survival
 	_visual = player.get_node("Visual") as Node3D
 	_camera_rig = player.camera_rig
 	_blood = BloodFX.new()
@@ -133,6 +135,8 @@ func _build_weapon() -> void:
 func try_attack() -> void:
 	if _health.is_dead() or _cd > 0.0:
 		return
+	if _survival != null and not _survival.try_attack_cost():
+		return # gassed: blocked with HUD/audio feedback, no cooldown burned
 	_cd = COOLDOWN
 	_swing_t = SWING_TIME
 	_hit_done = false
@@ -213,13 +217,9 @@ func _do_hit_stop() -> void:
 
 
 func _update_sprint_noise(delta: float) -> void:
-	var sprinting := false
-	if _hud.touch_mode:
-		sprinting = _hud.sprint_held
-	else:
-		sprinting = Input.is_action_pressed("sprint")
+	# Noise only when actually sprinting (stamina-gated), not just holding it.
 	var planar := Vector2(_player.velocity.x, _player.velocity.z).length()
-	if sprinting and planar > 4.0:
+	if _player.sprint_active and planar > 4.0:
 		_noise_t += delta
 		if _noise_t >= SPRINT_NOISE_INTERVAL:
 			_noise_t = 0.0

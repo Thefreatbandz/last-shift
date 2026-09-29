@@ -65,6 +65,11 @@ func add_container(pos: Vector3, items: Array) -> LootContainer:
 	return c
 
 
+## QA: total searchable containers (curated + one indoor per house).
+func container_count() -> int:
+	return _containers.size()
+
+
 func _on_search(c: LootContainer) -> void:
 	if _searching or c.searched:
 		return

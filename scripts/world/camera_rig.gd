@@ -36,6 +36,14 @@ func snap() -> void:
 		global_position = _goal_pos()
 
 
+## Point the camera immediately (used at spawn so the safehouse, which can
+## face +Z or -Z, never blocks the opening frame).
+func set_yaw_immediate(v: float) -> void:
+	yaw = v
+	_yaw_target = v
+	rotation.y = v
+
+
 func _process(delta: float) -> void:
 	if Input.is_action_pressed("rotate_left"):
 		_yaw_target += 1.7 * delta

@@ -12,6 +12,11 @@ extends CharacterBody3D
 
 var camera_rig: CameraRig
 var hud: Hud
+var survival: SurvivalStats # set by main; gates sprint when exhausted
+
+# Read by SurvivalStats: actual sprint state and whether moving.
+var sprint_active := false
+var moving := false
 
 # Footstep audio: distance-based, alternating variants.
 var _step_dist := 0.0
@@ -32,8 +37,14 @@ func _physics_process(delta: float) -> void:
 		sprinting = hud.sprint_held
 
 	var mag := clampf(iv.length(), 0.0, 1.0)
+	# Survival gate: exhausted survivors can't sprint.
+	var want_sprint := sprinting and mag > 0.1
+	if want_sprint and survival != null and not survival.can_sprint():
+		want_sprint = false
+	sprint_active = want_sprint
+	moving = mag > 0.1
 	var speed := lerpf(walk_speed, run_speed, mag)
-	if sprinting and mag > 0.1:
+	if sprint_active:
 		speed = sprint_speed
 
 	var wish := Vector3.ZERO

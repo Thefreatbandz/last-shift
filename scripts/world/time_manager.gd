@@ -29,9 +29,11 @@ var _visual: PlayerVisual
 var _env: Environment
 var _sky_mat: ProceduralSkyMaterial
 var _last_minute := -1
+var _built := false # build() runs only once a seeded run starts
 
 
 func build(root: Node3D, sun: DirectionalLight3D, hood: NeighborhoodBuilder, visual: PlayerVisual) -> void:
+	_built = true
 	_sun = sun
 	_hood = hood
 	_visual = visual
@@ -62,6 +64,8 @@ func build(root: Node3D, sun: DirectionalLight3D, hood: NeighborhoodBuilder, vis
 
 
 func _process(delta: float) -> void:
+	if not _built:
+		return # title screen: no run yet, nothing to drive
 	time_hours += delta * (24.0 / DAY_LENGTH)
 	if time_hours >= 24.0:
 		time_hours -= 24.0

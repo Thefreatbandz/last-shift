@@ -39,6 +39,19 @@ func is_dead() -> bool:
 	return _dead
 
 
+## Quiet HP loss (starvation, etc.): updates the HUD and death, but no
+## damage flash or hurt sound — those would spam every frame.
+func drain(amount: float) -> void:
+	if _dead:
+		return
+	hp = maxf(0.0, hp - amount)
+	_hud.set_health(hp, MAX_HP)
+	if hp <= 0.0:
+		_die()
+	else:
+		Sound.set_heartbeat(hp < 30.0 and hp > 0.0)
+
+
 func damage(amount: float) -> void:
 	if _dead:
 		return

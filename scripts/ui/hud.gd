@@ -10,6 +10,9 @@ extends CanvasLayer
 signal respawn_requested
 signal interact_pressed # touch USE button
 signal backpack_pressed # touch backpack button
+signal menu_pressed # top-right MENU button (pause)
+signal new_game_pressed # menu: start a fresh seeded neighborhood
+signal continue_pressed # menu: resume the current run
 
 var move_vector := Vector2.ZERO
 var touch_mode := false
@@ -33,6 +36,16 @@ var _death_overlay: Button
 
 # Phase 3: interact prompt + touch USE, backpack button, search progress bar,
 # sleep fade, "While You Slept" teaser.
+# Survival stats: slim stamina/hunger/thirst bars under the health bar.
+var _stam_fill: ColorRect
+var _hunger_fill: ColorRect
+var _thirst_fill: ColorRect
+var _stam_frac := 1.0
+var _hunger_frac := 1.0
+var _thirst_frac := 1.0
+var _stam_pulse := 0.0 # attack-denied feedback flash
+var _dehydrated := false
+var _dehy_vignette: ColorRect
 var _prompt_label: Label
 var _use_btn: Button
 var _pack_btn: Button
@@ -46,12 +59,47 @@ var _toast: Label
 var _toast_sub: Label
 var _toast_t := 0.0
 
+# Title / pause menu: seed display, NEW GAME (new neighborhood), CONTINUE.
+var _hud_root: Control
+var _menu_root: Control
+var _menu_title: Label
+var _menu_sub: Label
+var _menu_seed: Label
+var _menu_new: Button
+var _menu_continue: Button
+var _hud_menu_btn: Button
+var _menu_open := false
+
+
+func _make_meter_bar(root: Control, top: int, color: Color) -> ColorRect:
+	var bg := ColorRect.new()
+	bg.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	bg.offset_left = 16
+	bg.offset_top = top
+	bg.offset_right = 186
+	bg.offset_bottom = top + 8
+	bg.color = Color(0, 0, 0, 0.55)
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(bg)
+	var fill := ColorRect.new()
+	fill.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	fill.offset_left = 18
+	fill.offset_top = top + 2
+	fill.offset_right = 184
+	fill.offset_bottom = top + 6
+	fill.color = color
+	fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(fill)
+	return fill
+
 
 func _ready() -> void:
+	process_mode = Node.PROCESS_MODE_ALWAYS # menu must work while paused
 	var root := Control.new()
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(root)
+	_hud_root = root
 
 	# --- Slim health bar, top-left ---
 	var hp_bg := ColorRect.new()
@@ -72,6 +120,18 @@ func _ready() -> void:
 	_hp_fill.color = Color(0.80, 0.16, 0.14, 0.95)
 	_hp_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(_hp_fill)
+
+	# --- Survival bars: stamina / hunger / thirst, slim, under the HP bar ---
+	_stam_fill = _make_meter_bar(root, 32, Color(0.35, 0.78, 0.32, 0.95))
+	_hunger_fill = _make_meter_bar(root, 44, Color(0.92, 0.55, 0.18, 0.95))
+	_thirst_fill = _make_meter_bar(root, 56, Color(0.25, 0.55, 0.95, 0.95))
+
+	# --- Dehydration vignette (blue pulse at 0 thirst) ---
+	_dehy_vignette = ColorRect.new()
+	_dehy_vignette.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_dehy_vignette.color = Color(0.15, 0.30, 0.65, 0.0)
+	_dehy_vignette.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(_dehy_vignette)
 
 	# --- Compact day/clock panel, top-center ---
 	var panel := PanelContainer.new()
@@ -113,9 +173,9 @@ func _ready() -> void:
 	_hint_label = Label.new()
 	_hint_label.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	_hint_label.offset_left = 18
-	_hint_label.offset_top = 40
+	_hint_label.offset_top = 72
 	_hint_label.offset_right = 560
-	_hint_label.offset_bottom = 140
+	_hint_label.offset_bottom = 172
 	_hint_label.text = "WASD / ARROWS — move\nSHIFT — sprint   SPACE / CLICK — attack\nQ / E — rotate camera   F — use/search   TAB — backpack"
 	_hint_label.add_theme_font_size_override("font_size", 15)
 	_hint_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.65))
@@ -287,6 +347,25 @@ func _ready() -> void:
 	_pack_btn.button_down.connect(func() -> void: backpack_pressed.emit())
 	root.add_child(_pack_btn)
 
+	# --- MENU button (top-right, next to PACK): pause / seed / new game ---
+	_hud_menu_btn = Button.new()
+	_hud_menu_btn.text = "MENU"
+	_hud_menu_btn.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_hud_menu_btn.offset_left = -172
+	_hud_menu_btn.offset_top = 14
+	_hud_menu_btn.offset_right = -100
+	_hud_menu_btn.offset_bottom = 66
+	_hud_menu_btn.focus_mode = Control.FOCUS_NONE
+	_hud_menu_btn.add_theme_font_size_override("font_size", 16)
+	_hud_menu_btn.add_theme_stylebox_override("normal", pb)
+	_hud_menu_btn.add_theme_stylebox_override("pressed", pb2)
+	_hud_menu_btn.add_theme_stylebox_override("hover", pb)
+	_hud_menu_btn.visible = false
+	_hud_menu_btn.button_down.connect(func() -> void: menu_pressed.emit())
+	root.add_child(_hud_menu_btn)
+
+	_build_menu()
+
 	# --- Phase 3: work progress bar (bottom-center, e.g. SEARCHING) ---
 	_work_label = Label.new()
 	_work_label.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
@@ -358,6 +437,127 @@ func _ready() -> void:
 	toast_vbox.add_child(_toast_sub)
 
 
+## Title / pause menu: full-screen overlay with the neighborhood seed,
+## CONTINUE (pause only) and NEW GAME — NEW NEIGHBORHOOD.
+func _menu_button(text: String) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.custom_minimum_size = Vector2(300, 64)
+	b.focus_mode = Control.FOCUS_NONE
+	b.add_theme_font_size_override("font_size", 19)
+	b.add_theme_color_override("font_color", Color(0.95, 0.92, 0.85))
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.12, 0.13, 0.15, 0.95)
+	sb.set_corner_radius_all(12)
+	sb.border_width_left = 2
+	sb.border_width_right = 2
+	sb.border_width_top = 2
+	sb.border_width_bottom = 2
+	sb.border_color = Color(0.55, 0.45, 0.30, 0.9)
+	b.add_theme_stylebox_override("normal", sb)
+	var sb2 := sb.duplicate() as StyleBoxFlat
+	sb2.bg_color = Color(0.25, 0.22, 0.18, 0.95)
+	b.add_theme_stylebox_override("pressed", sb2)
+	b.add_theme_stylebox_override("hover", sb)
+	return b
+
+
+func _build_menu() -> void:
+	_menu_root = Control.new()
+	_menu_root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_menu_root.mouse_filter = Control.MOUSE_FILTER_STOP
+	_menu_root.visible = false
+	add_child(_menu_root)
+
+	var dim := ColorRect.new()
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.color = Color(0.015, 0.02, 0.03, 0.96)
+	_menu_root.add_child(dim)
+
+	var vbox := VBoxContainer.new()
+	vbox.set_anchors_preset(Control.PRESET_CENTER)
+	vbox.offset_left = -340
+	vbox.offset_right = 340
+	vbox.offset_top = -260
+	vbox.offset_bottom = 260
+	vbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	vbox.add_theme_constant_override("separation", 18)
+	_menu_root.add_child(vbox)
+
+	_menu_title = Label.new()
+	_menu_title.text = "LAST SHIFT"
+	_menu_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_menu_title.add_theme_font_size_override("font_size", 58)
+	_menu_title.add_theme_color_override("font_color", Color(0.93, 0.88, 0.76))
+	_menu_title.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
+	_menu_title.add_theme_constant_override("shadow_offset_x", 3)
+	_menu_title.add_theme_constant_override("shadow_offset_y", 3)
+	vbox.add_child(_menu_title)
+
+	_menu_sub = Label.new()
+	_menu_sub.text = "Every neighborhood is different. Every run is yours."
+	_menu_sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_menu_sub.add_theme_font_size_override("font_size", 16)
+	_menu_sub.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
+	_menu_sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vbox.add_child(_menu_sub)
+
+	_menu_seed = Label.new()
+	_menu_seed.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_menu_seed.add_theme_font_size_override("font_size", 21)
+	_menu_seed.add_theme_color_override("font_color", Color(0.95, 0.75, 0.30))
+	vbox.add_child(_menu_seed)
+
+	_menu_continue = _menu_button("CONTINUE")
+	_menu_continue.button_down.connect(func() -> void: continue_pressed.emit())
+	vbox.add_child(_menu_continue)
+
+	_menu_new = _menu_button("NEW GAME — NEW NEIGHBORHOOD")
+	_menu_new.button_down.connect(func() -> void: new_game_pressed.emit())
+	vbox.add_child(_menu_new)
+
+	var hint := Label.new()
+	hint.text = "Write down your seed — the same seed rebuilds the same streets."
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint.add_theme_font_size_override("font_size", 14)
+	hint.add_theme_color_override("font_color", Color(1, 1, 1, 0.40))
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vbox.add_child(hint)
+
+
+func is_menu_open() -> bool:
+	return _menu_open
+
+
+func _set_menu(seed_text: String, title: String, show_continue: bool,
+		show_sub: bool) -> void:
+	_menu_open = true
+	_menu_root.visible = true
+	_menu_title.text = title
+	_menu_sub.visible = show_sub
+	_menu_seed.text = seed_text
+	_menu_continue.visible = show_continue
+	_hud_menu_btn.visible = false
+	_hud_root.visible = false
+
+
+## Title screen: shown at boot when no seed is chosen yet.
+func show_title() -> void:
+	_set_menu("NO NEIGHBORHOOD YET — START A NEW GAME", "LAST SHIFT", false, true)
+
+
+## Pause menu: seed label, CONTINUE, NEW GAME.
+func show_pause(seed: int) -> void:
+	_set_menu("NEIGHBORHOOD %d" % seed, "PAUSED", true, false)
+
+
+func hide_menu() -> void:
+	_menu_open = false
+	_menu_root.visible = false
+	_hud_root.visible = true
+	_hud_menu_btn.visible = true
+
+
 func _input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch and (event as InputEventScreenTouch).pressed and not touch_mode:
 		touch_mode = true
@@ -381,12 +581,22 @@ func _process(delta: float) -> void:
 				_touch_hint.visible = false
 	# Damage vignette: flash decays; low HP gets a heartbeat pulse.
 	_flash = maxf(0.0, _flash - delta * 1.6)
+	_pulse_t += delta # shared clock for all HUD pulses (meters, vignette)
 	var a := _flash * 0.45
 	if _hp_frac < 0.30 and not _death_overlay.visible:
-		_pulse_t += delta
 		var beat := pow(maxf(0.0, sin(_pulse_t * 5.2)), 3.0)
 		a = maxf(a, 0.10 + beat * 0.22)
 	_vignette.color = Color(0.70, 0.05, 0.05, a)
+	# Survival bars: pulse white when a meter is in warning (<25%).
+	_stam_pulse = maxf(0.0, _stam_pulse - delta * 2.5)
+	_flash_meter(_stam_fill, _stam_frac, Color(0.35, 0.78, 0.32, 0.95), _stam_pulse)
+	_flash_meter(_hunger_fill, _hunger_frac, Color(0.92, 0.55, 0.18, 0.95), 0.0)
+	_flash_meter(_thirst_fill, _thirst_frac, Color(0.25, 0.55, 0.95, 0.95), 0.0)
+	# Dehydration: slow blue pulse around the screen edges.
+	var da := 0.0
+	if _dehydrated and not _death_overlay.visible:
+		da = 0.07 + 0.05 * (0.5 + 0.5 * sin(_pulse_t * 3.0))
+	_dehy_vignette.color = Color(0.15, 0.30, 0.65, da)
 	# Phase 3: work bar + toast timers.
 	if _work_t > 0.0:
 		_work_t = maxf(0.0, _work_t - delta)
@@ -473,6 +683,34 @@ func set_health(hp: float, max_hp: float) -> void:
 
 func flash_damage() -> void:
 	_flash = 1.0
+
+
+## Survival meters: update the three slim bars (fractions 0..1).
+func set_survival(stam_frac: float, hunger_frac: float, thirst_frac: float) -> void:
+	_stam_frac = clampf(stam_frac, 0.0, 1.0)
+	_hunger_frac = clampf(hunger_frac, 0.0, 1.0)
+	_thirst_frac = clampf(thirst_frac, 0.0, 1.0)
+	_stam_fill.offset_right = 18.0 + 166.0 * _stam_frac
+	_hunger_fill.offset_right = 18.0 + 166.0 * _hunger_frac
+	_thirst_fill.offset_right = 18.0 + 166.0 * _thirst_frac
+
+
+func set_dehydrated(on: bool) -> void:
+	_dehydrated = on
+
+
+## Attack-denied feedback: the stamina bar flashes bright.
+func pulse_stamina() -> void:
+	_stam_pulse = 1.0
+
+
+func _flash_meter(fill: ColorRect, frac: float, base: Color, pulse: float) -> void:
+	var warn := frac < 0.25
+	var blink := 0.0
+	if warn:
+		blink = 0.45 * (0.5 + 0.5 * sin(_pulse_t * 8.0))
+	blink = maxf(blink, pulse * 0.6)
+	fill.color = base.lerp(Color.WHITE, blink)
 
 
 func show_death() -> void:

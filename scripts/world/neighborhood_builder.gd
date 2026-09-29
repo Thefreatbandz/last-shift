@@ -1,23 +1,23 @@
 class_name NeighborhoodBuilder
 extends Node3D
-## Procedurally builds the Phase 1 residential neighborhood from a fixed seed:
-## ground, roads + sidewalks, houses (one boarded-up future safehouse),
-## streetlights, trees, fences, abandoned cars (one smoking), trash,
-## a gas station corner, and invisible boundary walls. All collision is
-## simple StaticBody3D boxes. Shared materials keep draw state cheap.
+## Procedurally builds the LAST SHIFT residential neighborhood from a WORLD
+## SEED: ground, roads, houses (one boarded-up safehouse), streetlights,
+## trees, fences, abandoned cars (one smoking), trash, a gas station corner,
+## and invisible boundary walls. Same seed => identical neighborhood, every
+## time (all layout RNG flows through one seeded RandomNumberGenerator).
+## A new seed => a different street grid, different house placements, a
+## different safehouse — every player's world is their own.
 ##
-## HD world pass: houses get trim (corner boards, foundation, fascia,
-## ridge caps), framed windows with sills + shutters, paneled doors with
-## frames and steps, per-house roof colors, furnished interiors (couch
-## with cushions, bookshelf with books, rug, floor lamp), lawns, curbs,
-## grass tufts + debris via MultiMesh, detailed cars (pillars, hubs,
-## bumpers, headlights), faceted trees/bushes, and distant silhouettes.
+## Collision is simple StaticBody3D boxes. Shared materials keep draw state
+## cheap. HD world pass visuals (trim, shutters, muntins, furnished
+## interiors, detailed cars, faceted trees, skyline) are reused as-is —
+## only the geography varies per seed.
 
-const SEED := 20260928
 const MAP_HALF := 74.0
 
 var _rng := RandomNumberGenerator.new()
 var _time := 0.0
+var world_seed := -1 # the seed this neighborhood was built from (-1 = unbuilt)
 
 # Animated / night-driven materials.
 var _window_lit_mat: StandardMaterial3D
@@ -37,6 +37,20 @@ var safehouse_door_pivot: Node3D
 # QA pass: every house is enterable. houses[] entries are Dictionaries:
 # {pos, w, d, face, roof (Node3D), door: {pivot, blocker, pos, open, safehouse}}
 var houses: Array = []
+
+# Seeded-generation layout state (filled by build_world).
+var zombie_spawns: Array[Vector3] = [] # 6 scatter points for the zombie pack
+var safehouse_index := -1 # which house is the boarded safehouse
+var safehouse_door_pos := Vector3.ZERO # world-space front door of the safehouse
+var safehouse_porch := Vector3.ZERO # world-space porch (player start / respawn)
+var player_start := Vector3.ZERO
+var road_ew_z := 0.0 # EW road center line
+var road_ns_x := 20.0 # NS road center line
+var _road_rects: Array[Rect2] = [] # road footprints (for scatter rejection)
+var _lot_rects: Array[Rect2] = [] # house lot footprints (with margins)
+var _lot_specs: Array = [] # seeded house lots: {pos, face, w, d}
+var _gas_rect := Rect2() # gas station footprint
+var _gas_pos := Vector3.ZERO # gas station origin
 
 # Static shared materials.
 var _m_roof: StandardMaterial3D
@@ -82,8 +96,22 @@ var _m_inner: StandardMaterial3D
 
 
 func _ready() -> void:
-	_rng.seed = SEED
+	# Materials only. The bootstrap (main.gd) drives build_world(seed) once
+	# the player picks a seed on the title screen — so a fresh boot shows
+	# the title over an empty lot instead of a pre-built world.
 	_make_materials()
+
+
+## Builds (or rebuilds) the whole neighborhood from a seed. Deterministic:
+## the same seed always produces the identical layout. Safe to call twice —
+## any previous build is torn down first.
+func build_world(seed: int) -> void:
+	_clear_world()
+	world_seed = seed
+	_rng.seed = seed
+	_layout_roads()
+	_layout_gas_station()
+	_layout_house_lots() # lots first: grass/debris/scatter can reject them
 	_build_ground()
 	_build_roads()
 	_build_houses()
@@ -95,6 +123,157 @@ func _ready() -> void:
 	_build_props()
 	_build_silhouettes()
 	_build_boundary()
+	_layout_safehouse_info() # sets player_start / safehouse_porch
+	_layout_zombie_spawns()
+
+
+func _clear_world() -> void:
+	for c in get_children():
+		remove_child(c)
+		c.free()
+	houses.clear()
+	safehouse_boards.clear()
+	safehouse_door_pivot = null
+	zombie_spawns.clear()
+	safehouse_index = -1
+	safehouse_door_pos = Vector3.ZERO
+	safehouse_porch = Vector3.ZERO
+	player_start = Vector3.ZERO
+	_road_rects.clear()
+	_lot_rects.clear()
+	_lot_specs.clear()
+	_sway.clear()
+	_spot_lights.clear()
+	_gas_pos = Vector3.ZERO
+
+
+# ------------------------------------------------------- seeded layout ---
+
+func _layout_roads() -> void:
+	# The road cross moves per seed: EW z and NS x snap to a coarse grid so
+	# houses always have room on both sides. Same topology every seed (one
+	# EW road + one NS road) — only the position shifts.
+	var slots := [-14.0, -7.0, 0.0, 7.0, 14.0]
+	road_ew_z = slots[_rng.randi() % slots.size()]
+	road_ns_x = slots[_rng.randi() % slots.size()]
+	_road_rects = [
+		Rect2(-MAP_HALF, road_ew_z - 7.0, MAP_HALF * 2.0, 14.0),
+		Rect2(road_ns_x - 7.0, -MAP_HALF, 14.0, MAP_HALF * 2.0),
+	]
+
+
+func _layout_gas_station() -> void:
+	# One quadrant of the road intersection, reserved before house lots.
+	# Pushed well clear of the house bands so lots rarely compete with it.
+	var qx := 1.0 if _rng.randf() < 0.5 else -1.0
+	var qz := 1.0 if _rng.randf() < 0.5 else -1.0
+	var gx := clampf(road_ns_x + qx * 34.0, -54.0, 54.0)
+	var gz := clampf(road_ew_z + qz * 30.0, -54.0, 54.0)
+	_gas_pos = Vector3(gx, 0, gz)
+	_gas_rect = Rect2(gx - 11.0, gz - 9.0, 22.0, 18.0)
+
+
+func _on_road(p: Vector3, margin := 0.0) -> bool:
+	for r in _road_rects:
+		if r.grow(margin).has_point(Vector2(p.x, p.z)):
+			return true
+	return false
+
+
+func _point_in_lots(p: Vector3, margin := 0.0) -> bool:
+	for l in _lot_rects:
+		if l.grow(margin).has_point(Vector2(p.x, p.z)):
+			return true
+	if _gas_rect.has_area() and _gas_rect.grow(margin).has_point(Vector2(p.x, p.z)):
+		return true
+	return false
+
+
+func _lot_free(rect: Rect2) -> bool:
+	for r in _road_rects:
+		if r.grow(2.0).intersects(rect):
+			return false
+	for l in _lot_rects:
+		if l.intersects(rect):
+			return false
+	if _gas_rect.has_area() and _gas_rect.grow(2.0).intersects(rect):
+		return false
+	return true
+
+
+func _curb_spot() -> Vector3:
+	# Random point just off a road edge (trash bags, hydrants).
+	if _rng.randf() < 0.5:
+		var s := 1.0 if _rng.randf() < 0.5 else -1.0
+		return Vector3(_rng.randf_range(-64, 64), 0,
+			road_ew_z + s * _rng.randf_range(6.3, 7.3))
+	var s2 := 1.0 if _rng.randf() < 0.5 else -1.0
+	return Vector3(road_ns_x + s2 * _rng.randf_range(6.3, 7.3), 0,
+		_rng.randf_range(-64, 64))
+
+
+func _open_spot(margin := 1.0) -> Vector3:
+	# Rejection-sampled open ground: not on roads, lots, or the gas station.
+	for _i in 200:
+		var p := Vector3(_rng.randf_range(-62, 62), 0, _rng.randf_range(-62, 62))
+		if _on_road(p, margin) or _point_in_lots(p, margin):
+			continue
+		return p
+	return Vector3(road_ns_x + 10.0, 0, road_ew_z + 10.0) # fallback: near intersection
+
+
+func _layout_zombie_spawns() -> void:
+	# Six scatter points: open ground, away from the player start and the
+	# safehouse porch, spread apart.
+	zombie_spawns.clear()
+	var tries := 0
+	while zombie_spawns.size() < 6 and tries < 400:
+		tries += 1
+		var p := _open_spot(2.0)
+		p.y = 0.3
+		if p.distance_to(player_start) < 16.0:
+			continue
+		if p.distance_to(safehouse_porch) < 10.0:
+			continue
+		var ok := true
+		for s in zombie_spawns:
+			if p.distance_to(s) < 8.0:
+				ok = false
+				break
+		if not ok:
+			continue
+		zombie_spawns.append(p)
+
+
+func _layout_safehouse_info() -> void:
+	var sh := houses[safehouse_index] as Dictionary
+	var pos := sh["pos"] as Vector3
+	var face := float(sh["face"])
+	var d := float(sh["d"])
+	var w := float(sh["w"])
+	safehouse_door_pos = pos + Vector3(0, 0, face * (d * 0.5))
+	safehouse_porch = pos + Vector3(0, 0, face * (d * 0.5 + 3.0))
+	player_start = safehouse_porch + Vector3(0, 0.3, 0)
+	# Faint smoke column from the safehouse chimney: find home from afar.
+	_beacon(self, pos + Vector3(w * 0.25, 5.4, d * 0.12))
+
+
+## Deterministic layout fingerprint (tests): same seed => identical string.
+func layout_hash() -> String:
+	var parts: Array[String] = []
+	parts.append("seed:%d" % world_seed)
+	parts.append("roads:%.1f,%.1f" % [road_ew_z, road_ns_x])
+	parts.append("houses:%d" % houses.size())
+	for h in houses:
+		var hd := h as Dictionary
+		var p := hd["pos"] as Vector3
+		parts.append("h:%.2f,%.2f|w:%.2f|d:%.2f|f:%.1f" % [
+			p.x, p.z, float(hd["w"]), float(hd["d"]), float(hd["face"])])
+	parts.append("sh:%d" % safehouse_index)
+	parts.append("porch:%.2f,%.2f" % [safehouse_porch.x, safehouse_porch.z])
+	for s in zombie_spawns:
+		parts.append("z:%.2f,%.2f" % [s.x, s.z])
+	return "|".join(parts)
 
 
 func _process(delta: float) -> void:
@@ -373,17 +552,11 @@ func _build_ground() -> void:
 
 
 func _on_grass_ok(p: Vector3) -> bool:
-	# Reject roads, sidewalks and house footprints.
-	if absf(p.z) < 7.0:
+	# Reject roads, sidewalks, gas station and house footprints.
+	if _on_road(p):
 		return false
-	if absf(p.x - 20.0) < 7.0:
+	if _point_in_lots(p, 2.5):
 		return false
-	for h in houses:
-		var hp := (h as Dictionary)["pos"] as Vector3
-		var hw := float((h as Dictionary)["w"]) * 0.5 + 2.5
-		var hd := float((h as Dictionary)["d"]) * 0.5 + 2.5
-		if absf(p.x - hp.x) < hw and absf(p.z - hp.z) < hd:
-			return false
 	return true
 
 
@@ -426,7 +599,8 @@ func _build_debris() -> void:
 	while xf.size() < 90 and tries < 600:
 		tries += 1
 		var p := Vector3(_rng.randf_range(-68, 68), 0.012, _rng.randf_range(-68, 68))
-		var near_road := absf(absf(p.z) - 7.5) < 2.5 or absf(absf(p.x - 20.0) - 7.5) < 2.5
+		var near_road := absf(absf(p.z - road_ew_z) - 7.5) < 2.5 \
+			or absf(absf(p.x - road_ns_x) - 7.5) < 2.5
 		if not near_road:
 			continue
 		var b := Basis(Vector3.UP, _rng.randf() * TAU).scaled(
@@ -450,25 +624,27 @@ func _build_roads() -> void:
 	rm.roughness = 0.95
 	var sm := _std(Color(0.42, 0.42, 0.43), 0.95) # sidewalk
 	var dm := _std(Color(0.75, 0.68, 0.35)) # center dashes
-	_box(self, Vector3(140, 0.02, 8), Vector3(0, -0.01, 0), rm) # EW road
-	_box(self, Vector3(8, 0.02, 140), Vector3(20, -0.01, 0), rm) # NS road
-	_box(self, Vector3(140, 0.02, 2), Vector3(0, -0.005, -5), sm) # sidewalks
-	_box(self, Vector3(140, 0.02, 2), Vector3(0, -0.005, 5), sm)
-	_box(self, Vector3(2, 0.02, 140), Vector3(14, -0.005, 0), sm)
-	_box(self, Vector3(2, 0.02, 140), Vector3(26, -0.005, 0), sm)
+	var ez := road_ew_z
+	var nx := road_ns_x
+	_box(self, Vector3(140, 0.02, 8), Vector3(0, -0.01, ez), rm) # EW road
+	_box(self, Vector3(8, 0.02, 140), Vector3(nx, -0.01, 0), rm) # NS road
+	_box(self, Vector3(140, 0.02, 2), Vector3(0, -0.005, ez - 5), sm) # sidewalks
+	_box(self, Vector3(140, 0.02, 2), Vector3(0, -0.005, ez + 5), sm)
+	_box(self, Vector3(2, 0.02, 140), Vector3(nx - 6, -0.005, 0), sm)
+	_box(self, Vector3(2, 0.02, 140), Vector3(nx + 6, -0.005, 0), sm)
 	# Curbs: raised concrete lips along every sidewalk edge.
-	for cz in [-6.05, -3.95, 3.95, 6.05]:
+	for cz in [ez - 6.05, ez - 3.95, ez + 3.95, ez + 6.05]:
 		_box(self, Vector3(140, 0.14, 0.18), Vector3(0, 0.05, cz), _m_curb)
-	for cx in [12.95, 15.05, 24.95, 27.05]:
+	for cx in [nx - 7.05, nx - 4.95, nx + 4.95, nx + 7.05]:
 		_box(self, Vector3(0.18, 0.14, 140), Vector3(cx, 0.05, 0), _m_curb)
 	for x in range(-66, 67, 6):
-		_box(self, Vector3(1.6, 0.012, 0.18), Vector3(x, 0.004, 0), dm)
+		_box(self, Vector3(1.6, 0.012, 0.18), Vector3(x, 0.004, ez), dm)
 	for z in range(-66, 67, 6):
-		if absf(z) > 7.0: # keep the intersection clear
-			_box(self, Vector3(0.18, 0.012, 1.6), Vector3(20, 0.004, z), dm)
+		if absf(z - ez) > 7.0: # keep the intersection clear
+			_box(self, Vector3(0.18, 0.012, 1.6), Vector3(nx, 0.004, z), dm)
 
 
-func _house(pos: Vector3, face: float, w: float, d: float, wall: Color, roof_c: Color, boarded: bool) -> void:
+func _house(pos: Vector3, face: float, w: float, d: float, wall: Color, roof_c: Color) -> void:
 	# QA pass: houses are enterable — four real walls (front wall has a door
 	# gap), a hinged door every house gets, a simple furnished interior, and
 	# a roof group that hides while the player is inside (camera would
@@ -564,14 +740,28 @@ func _house(pos: Vector3, face: float, w: float, d: float, wall: Color, roof_c: 
 	_window(root, Vector3(w * 0.28, 1.7, out_f), Vector3(0, 0, face), true)
 	_window(root, Vector3(-w * 0.5 - t * 0.5 - 0.03, 1.7, 0.0), Vector3(-1, 0, 0), false)
 	_window(root, Vector3(w * 0.5 + t * 0.5 + 0.03, 1.7, 0.0), Vector3(1, 0, 0), false)
-	if boarded:
-		_boards(root, fz + face * (t * 0.5 + 0.07), w)
-		safehouse_door_pivot = pivot
 	var door := {
 		"pivot": pivot, "blocker": blocker,
-		"pos": pos + Vector3(0, 0, fz), "open": false, "safehouse": boarded,
+		"pos": pos + Vector3(0, 0, fz), "open": false, "safehouse": false,
 	}
 	houses.append({"pos": pos, "w": w, "d": d, "face": face, "roof": roof_g, "door": door})
+
+
+## Boards up one house as the safehouse: planks across the door and front
+## windows, tracked so claiming can knock them down. Called after the
+## seeded lot layout picks which house it is.
+func _board_house(h: Dictionary) -> void:
+	var door := h["door"] as Dictionary
+	var pivot := door["pivot"] as Node3D
+	var root := pivot.get_parent() as Node3D
+	var face := float(h["face"])
+	var w := float(h["w"])
+	var d := float(h["d"])
+	var t := 0.3
+	var fz := face * (d * 0.5)
+	_boards(root, fz + face * (t * 0.5 + 0.07), w)
+	safehouse_door_pivot = pivot
+	door["safehouse"] = true
 
 
 func _build_interior(root: Node3D, w: float, d: float, face: float) -> void:
@@ -660,7 +850,58 @@ func _boards(root: Node3D, fz: float, w: float) -> void:
 			safehouse_boards.append(p2)
 
 
+## Seeded lot layout: random house count, positions, sizes. Lots keep clear
+## of roads, the gas station and each other, and face the EW road. Runs
+## before ground scatter so grass/debris reject house footprints.
+func _layout_house_lots() -> void:
+	var target := _rng.randi_range(7, 9)
+	var tries := 0
+	while _lot_specs.size() < target and tries < 400:
+		tries += 1
+		var side := 1.0 if _rng.randf() < 0.5 else -1.0
+		var hx := _rng.randf_range(-58.0, 34.0)
+		if absf(hx - road_ns_x) < 11.0: # keep the intersection clear
+			continue
+		var hz: float = road_ew_z + side * _rng.randf_range(15.0, 23.0)
+		if absf(hz) > 60.0:
+			continue
+		var w := _rng.randf_range(6.8, 8.6)
+		var d := _rng.randf_range(6.2, 7.6)
+		var rect := Rect2(hx - w * 0.5 - 3.0, hz - d * 0.5 - 3.0, w + 6.0, d + 6.0)
+		if not _lot_free(rect):
+			continue
+		_lot_rects.append(rect)
+		_lot_specs.append({"pos": Vector3(hx, 0, hz), "face": -side, "w": w, "d": d})
+	# Ironclad guarantee: the map is mostly empty, so a coarse grid scan
+	# always finds room to reach the target count.
+	if _lot_specs.size() < target:
+		var bx := -60.0
+		while bx <= 48.0 and _lot_specs.size() < target:
+			for side in [1.0, -1.0]:
+				if _lot_specs.size() >= target:
+					break
+				if absf(bx - road_ns_x) < 12.0:
+					continue
+				var hz: float = road_ew_z + side * 19.0
+				if absf(hz) > 60.0:
+					continue
+				var rect := Rect2(bx - 7.3, hz - 6.8, 14.6, 13.6)
+				if not _lot_free(rect):
+					continue
+				_lot_rects.append(rect)
+				_lot_specs.append({"pos": Vector3(bx, 0, hz),
+					"face": -side, "w": 8.0, "d": 7.0})
+			bx += 12.0
+	if _lot_specs.is_empty():
+		# Paranoia fallback: force one house on open ground.
+		_lot_rects.append(Rect2(-37.0, road_ew_z + 13.5, 14.0, 13.0))
+		_lot_specs.append({"pos": Vector3(-30, 0, road_ew_z + 20.0),
+			"face": -1.0, "w": 8.0, "d": 7.0})
+
+
 func _build_houses() -> void:
+	# Builds every seeded lot (all enterable, furnished interiors); then one
+	# random house becomes the boarded safehouse.
 	var walls := [
 		Color(0.62, 0.58, 0.50), # weathered beige
 		Color(0.45, 0.50, 0.55), # gray blue
@@ -676,32 +917,38 @@ func _build_houses() -> void:
 		Color(0.22, 0.23, 0.26), # slate
 		Color(0.25, 0.28, 0.20), # moss
 	]
-	var specs := [
-		[Vector3(-46, 0, -20), 1.0, 8.0, 7.0, 0, 0, false],
-		[Vector3(-26, 0, -21), 1.0, 7.5, 6.5, 1, 2, false],
-		[Vector3(-6, 0, -20), 1.0, 8.5, 7.0, 2, 1, true], # boarded: future safehouse
-		[Vector3(-38, 0, 20), -1.0, 8.0, 7.0, 3, 3, false],
-		[Vector3(-14, 0, 21), -1.0, 7.0, 6.5, 4, 0, false],
-		[Vector3(12, 0, 20), -1.0, 8.0, 7.0, 5, 2, false],
-		[Vector3(-56, 0, 8), -1.0, 7.5, 6.5, 6, 1, false],
-	]
-	for s in specs:
-		_house(s[0], s[1], s[2], s[3], walls[int(s[4])], roofs[int(s[5])], bool(s[6]))
+	for spec in _lot_specs:
+		var s := spec as Dictionary
+		_house(s["pos"], float(s["face"]), float(s["w"]), float(s["d"]),
+			walls[_rng.randi() % walls.size()],
+			roofs[_rng.randi() % roofs.size()])
+	# The safehouse: one random house gets the boards.
+	safehouse_index = _rng.randi() % houses.size()
+	_board_house(houses[safehouse_index] as Dictionary)
 
 
 func _build_streetlights() -> void:
-	var spots := [
-		Vector3(-52, 0, -5.6), Vector3(-32, 0, 5.6), Vector3(-12, 0, -5.6),
-		Vector3(8, 0, 5.6), Vector3(32, 0, -5.6), Vector3(52, 0, 5.6),
-		Vector3(14.4, 0, -30), Vector3(25.6, 0, 26),
-	]
+	# Seeded: lamps march along both roads, alternating sides.
+	var spots: Array[Vector3] = []
+	var x := -60.0
+	var side := 1.0
+	while x < 44.0:
+		spots.append(Vector3(x, 0, road_ew_z + side * 5.6))
+		x += _rng.randf_range(18.0, 26.0)
+		side = -side
+	var z := -52.0
+	var side2 := 1.0
+	while z < 56.0:
+		spots.append(Vector3(road_ns_x + side2 * 5.6, 0, z))
+		z += _rng.randf_range(24.0, 34.0)
+		side2 = -side2
 	var real_light_idx := {1: true, 2: true, 3: true}
 	for i in spots.size():
 		var pos: Vector3 = spots[i]
 		# Arm reaches toward the nearest road.
-		var arm_dir := Vector3(0, 0, 1) if pos.z < 0.0 else Vector3(0, 0, -1)
-		if absf(pos.x - 20.0) < absf(pos.z):
-			arm_dir = Vector3(1, 0, 0) if pos.x < 20.0 else Vector3(-1, 0, 0)
+		var arm_dir := Vector3(0, 0, 1) if pos.z < road_ew_z else Vector3(0, 0, -1)
+		if absf(pos.x - road_ns_x) < absf(pos.z - road_ew_z):
+			arm_dir = Vector3(1, 0, 0) if pos.x < road_ns_x else Vector3(-1, 0, 0)
 		_streetlight(pos, arm_dir, real_light_idx.has(i))
 
 
@@ -733,26 +980,28 @@ func _streetlight(pos: Vector3, arm_dir: Vector3, with_spot: bool) -> void:
 
 
 func _build_trees() -> void:
-	var spots := [
-		Vector3(-58, 0, -32), Vector3(-40, 0, -34), Vector3(-20, 0, -33),
-		Vector3(0, 0, -34), Vector3(34, 0, -34), Vector3(56, 0, -32),
-		Vector3(-58, 0, 34), Vector3(-38, 0, 36), Vector3(-16, 0, 34),
-		Vector3(8, 0, 36), Vector3(36, 0, 34), Vector3(58, 0, 32),
-		Vector3(-64, 0, -8), Vector3(-64, 0, 20), Vector3(60, 0, 8),
-	]
-	for p in spots:
-		var j := Vector3(p.x + _rng.randf_range(-2.0, 2.0), 0, p.z + _rng.randf_range(-2.0, 2.0))
-		_tree(j, _rng.randf_range(0.85, 1.25))
-	# Bushes: faceted squashed spheres near houses and fences.
-	var bush_spots := [
-		Vector3(-40, 0, -14.5), Vector3(-52, 0, -14.5), Vector3(-20, 0, -15),
-		Vector3(0, 0, -14), Vector3(-32, 0, 14.5), Vector3(-8, 0, 15),
-		Vector3(18, 0, 14.5), Vector3(-62, 0, 2), Vector3(52, 0, -8),
-	]
-	for p in bush_spots:
-		var b := _sphere(self, _rng.randf_range(0.55, 0.85),
-			p + Vector3(0, 0.35, 0), _m_bush, true)
-		b.scale.y = 0.65
+	# Seeded scatter: trees on open ground, bushes in front of houses.
+	var placed := 0
+	var tries := 0
+	while placed < 14 and tries < 300:
+		tries += 1
+		var p := Vector3(_rng.randf_range(-64, 64), 0, _rng.randf_range(-64, 64))
+		if _on_road(p, 3.0) or _point_in_lots(p, 3.0):
+			continue
+		_tree(p, _rng.randf_range(0.85, 1.25))
+		placed += 1
+	for h in houses:
+		var hd := h as Dictionary
+		var hp := hd["pos"] as Vector3
+		var face := float(hd["face"])
+		var w := float(hd["w"])
+		var d := float(hd["d"])
+		for _k in _rng.randi_range(1, 2):
+			var bx := hp.x + _rng.randf_range(-w * 0.5, w * 0.5)
+			var bz := hp.z + face * (d * 0.5 + _rng.randf_range(1.2, 2.2))
+			var b := _sphere(self, _rng.randf_range(0.55, 0.85),
+				Vector3(bx, 0.35, bz), _m_bush, true)
+			b.scale.y = 0.65
 
 
 func _tree(pos: Vector3, s: float) -> void:
@@ -771,11 +1020,23 @@ func _tree(pos: Vector3, s: float) -> void:
 
 
 func _build_fences() -> void:
-	_fence_run(Vector3(-36, 0, -13.5), 12.0)
-	_fence_run(Vector3(-16, 0, -13.5), 8.0)
-	_fence_run(Vector3(4, 0, -13.5), 8.0)
-	_fence_run(Vector3(-26, 0, 13.5), 12.0)
-	_fence_run(Vector3(0, 0, 13.5), 10.0)
+	# Seeded: short fence runs beside random houses, clear of the door path.
+	var count := 0
+	for h in houses:
+		if count >= 5:
+			break
+		if _rng.randf() < 0.35:
+			continue
+		var hd := h as Dictionary
+		var hp := hd["pos"] as Vector3
+		var face := float(hd["face"])
+		var w := float(hd["w"])
+		var d := float(hd["d"])
+		var side := 1.0 if _rng.randf() < 0.5 else -1.0
+		var fx := hp.x + side * (w * 0.5 + 4.5)
+		var fz := hp.z + face * (d * 0.5 + 3.0)
+		_fence_run(Vector3(fx, 0, fz), _rng.randf_range(4.0, 7.0))
+		count += 1
 
 
 func _fence_run(center: Vector3, length: float) -> void:
@@ -794,6 +1055,7 @@ func _fence_run(center: Vector3, length: float) -> void:
 
 
 func _build_cars() -> void:
+	# Seeded: 4-6 abandoned cars parked along both roads, one smoking.
 	var colors := [
 		Color(0.42, 0.22, 0.15), # rust red
 		Color(0.28, 0.34, 0.40), # gray blue
@@ -801,11 +1063,42 @@ func _build_cars() -> void:
 		Color(0.52, 0.48, 0.38), # beige
 		Color(0.17, 0.23, 0.33), # dark blue
 	]
-	_car(Vector3(-10, 0, 2.2), 0.15, colors[0], false)
-	_car(Vector3(4, 0, -2.4), PI - 0.12, colors[1], false)
-	_car(Vector3(20, 0, 16), PI * 0.5 + 0.08, colors[2], true) # smoking
-	_car(Vector3(-42, 0, -2.2), -0.06, colors[3], false)
-	_car(Vector3(46, 0, -12), 2.2, colors[4], false)
+	var n := _rng.randi_range(4, 6)
+	var smoking_idx := _rng.randi() % n
+	var placed: Array[Vector3] = []
+	for i in n:
+		var col: Color = colors[_rng.randi() % colors.size()]
+		var cp := Vector3.ZERO
+		var rot := 0.0
+		var found := false
+		for _t in 40:
+			if _rng.randf() < 0.6:
+				var cx := _rng.randf_range(-60.0, 40.0)
+				if absf(cx - road_ns_x) < 8.0: # keep the intersection clear
+					continue
+				var cz := road_ew_z + (2.2 if _rng.randf() < 0.5 else -2.2)
+				rot = _rng.randf_range(-0.15, 0.15) + (0.0 if cz > road_ew_z else PI)
+				cp = Vector3(cx, 0, cz)
+			else:
+				var nz := _rng.randf_range(-56.0, 56.0)
+				if absf(nz - road_ew_z) < 8.0:
+					continue
+				var nx2 := road_ns_x + (2.2 if _rng.randf() < 0.5 else -2.2)
+				rot = PI * 0.5 + _rng.randf_range(-0.1, 0.1)
+				cp = Vector3(nx2, 0, nz)
+			var clash := false
+			for q in placed:
+				if cp.distance_to(q) < 7.0:
+					clash = true
+					break
+			if clash:
+				continue
+			found = true
+			break
+		if not found:
+			continue
+		placed.append(cp)
+		_car(cp, rot, col, i == smoking_idx)
 
 
 func _car(pos: Vector3, rot_y: float, color: Color, smoking: bool) -> void:
@@ -883,9 +1176,43 @@ func _smoke(parent: Node3D, pos: Vector3) -> void:
 	parent.add_child(p)
 
 
+## Faint locator column over the safehouse chimney: tall, thin, light smoke
+## so the player can find home from across the neighborhood.
+func _beacon(parent: Node3D, pos: Vector3) -> void:
+	var p := GPUParticles3D.new()
+	p.amount = 36
+	p.lifetime = 7.0
+	p.preprocess = 7.0
+	p.visibility_aabb = AABB(Vector3(-4, -1, -4), Vector3(8, 18, 8))
+	var pm := ParticleProcessMaterial.new()
+	pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
+	pm.emission_sphere_radius = 0.5
+	pm.direction = Vector3(0, 1, 0)
+	pm.spread = 8.0
+	pm.initial_velocity_min = 1.0
+	pm.initial_velocity_max = 1.8
+	pm.gravity = Vector3(0, 0.3, 0)
+	pm.scale_min = 1.6
+	pm.scale_max = 2.6
+	pm.color = Color(1, 1, 1, 0.28)
+	p.process_material = pm
+	var quad := QuadMesh.new()
+	quad.size = Vector2(1.6, 1.6)
+	var qm := StandardMaterial3D.new()
+	qm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	qm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	qm.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	qm.albedo_texture = _smoke_tex
+	qm.albedo_color = Color(0.75, 0.75, 0.78, 1.0)
+	quad.material = qm
+	p.draw_pass_1 = quad
+	p.position = pos
+	parent.add_child(p)
+
+
 func _build_gas_station() -> void:
 	var root := Node3D.new()
-	root.position = Vector3(44, 0, -22)
+	root.position = _gas_pos # seeded quadrant of the road intersection
 	add_child(root)
 	var canopy_mat := _std(Color(0.72, 0.71, 0.68))
 	for px in [-6.0, 6.0]:
@@ -929,33 +1256,35 @@ func _build_gas_station() -> void:
 
 
 func _build_props() -> void:
-	# Trash bags near curbs.
-	var spots := [
-		Vector3(-30, 0, 6.2), Vector3(-2, 0, -6.2), Vector3(18, 0, 6.2),
-		Vector3(38, 0, -6.2), Vector3(-48, 0, -14), Vector3(6, 0, 14),
-		Vector3(24, 0, -14), Vector3(-20, 0, 26),
-	]
-	for p in spots:
+	# Seeded scatter. Trash bags + hydrants hug the curbs; barrels sit on
+	# open ground; the dumpster hides behind a random house; crates stack
+	# by the gas station.
+	for _i in _rng.randi_range(6, 9):
+		var p := _curb_spot()
 		var b := _sphere(self, 0.45, p + Vector3(0, 0.3, 0), _m_trash)
 		b.scale.y = 0.7
-	# Rusted barrels with band rings.
-	for p in [Vector3(-44, 0, -25.5), Vector3(50, 0, 18.5), Vector3(-2, 0, 27)]:
-		_cyl(self, 0.30, 0.30, 0.9, p + Vector3(0, 0.45, 0), _m_barrel)
-		_cyl(self, 0.315, 0.315, 0.07, p + Vector3(0, 0.68, 0), _m_barrel_band)
-		_cyl(self, 0.315, 0.315, 0.07, p + Vector3(0, 0.24, 0), _m_barrel_band)
-		_solid(self, Vector3(0.65, 0.95, 0.65), p + Vector3(0, 0.48, 0))
-	# Fire hydrants.
-	for p in [Vector3(-24, 0, 6.0), Vector3(28, 0, -6.0)]:
-		_cyl(self, 0.16, 0.18, 0.7, p + Vector3(0, 0.35, 0), _std(Color(0.55, 0.14, 0.10)))
-		_cyl(self, 0.20, 0.20, 0.12, p + Vector3(0, 0.72, 0), _std(Color(0.55, 0.14, 0.10)))
-		_solid(self, Vector3(0.4, 0.8, 0.4), p + Vector3(0, 0.4, 0))
-	# Dumpster behind a house.
-	_box(self, Vector3(2.2, 1.3, 1.2), Vector3(-46, 0.65, -27), _std(Color(0.16, 0.28, 0.18)))
-	_box(self, Vector3(2.3, 0.12, 1.3), Vector3(-46, 1.35, -27), _m_trim) # lid rim
-	_solid(self, Vector3(2.2, 1.3, 1.2), Vector3(-46, 0.65, -27))
-	# Wooden crates near the lot corner, with edge trim.
+	for _i in 3:
+		var p2 := _open_spot(1.0)
+		_cyl(self, 0.30, 0.30, 0.9, p2 + Vector3(0, 0.45, 0), _m_barrel)
+		_cyl(self, 0.315, 0.315, 0.07, p2 + Vector3(0, 0.68, 0), _m_barrel_band)
+		_cyl(self, 0.315, 0.315, 0.07, p2 + Vector3(0, 0.24, 0), _m_barrel_band)
+		_solid(self, Vector3(0.65, 0.95, 0.65), p2 + Vector3(0, 0.48, 0))
+	for _i in 2:
+		var p3 := _curb_spot()
+		var hm := _std(Color(0.55, 0.14, 0.10))
+		_cyl(self, 0.16, 0.18, 0.7, p3 + Vector3(0, 0.35, 0), hm)
+		_cyl(self, 0.20, 0.20, 0.12, p3 + Vector3(0, 0.72, 0), hm)
+		_solid(self, Vector3(0.4, 0.8, 0.4), p3 + Vector3(0, 0.4, 0))
+	if not houses.is_empty():
+		var hh := houses[_rng.randi() % houses.size()] as Dictionary
+		var hp := hh["pos"] as Vector3
+		var dp := hp + Vector3(-float(hh["w"]) * 0.5 - 2.5, 0,
+			-float(hh["face"]) * (float(hh["d"]) * 0.5 + 2.0))
+		_box(self, Vector3(2.2, 1.3, 1.2), dp + Vector3(0, 0.65, 0), _std(Color(0.16, 0.28, 0.18)))
+		_box(self, Vector3(2.3, 0.12, 1.3), dp + Vector3(0, 1.35, 0), _m_trim)
+		_solid(self, Vector3(2.2, 1.3, 1.2), dp + Vector3(0, 0.65, 0))
 	for i in 3:
-		var cp := Vector3(56 + (i % 2) * 1.1, 0.4, 20 + i * 0.4)
+		var cp := _gas_pos + Vector3(12.0 + (i % 2) * 1.1, 0.4, 8.0 + i * 0.4)
 		_box(self, Vector3(0.8, 0.8, 0.8), cp, _m_wood, _rng.randf() * 0.6)
 		_box(self, Vector3(0.86, 0.1, 0.86), cp + Vector3(0, 0.36, 0), _m_trim, _rng.randf() * 0.6)
 
