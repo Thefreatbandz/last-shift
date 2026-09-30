@@ -16,6 +16,7 @@ extends Node3D
 @onready var hud: Hud = $HUD
 
 var _inv_panel: InventoryPanel
+var _craft_panel: CraftingPanel
 var _safehouse: Safehouse
 var _minimap_view: MinimapView
 var _run_started := false
@@ -148,6 +149,11 @@ func _start_run(seed: int) -> void:
 	loot.name = "Loot"
 	add_child(loot)
 	loot.setup(player, visual, inventory, interact, hud, neighborhood.outdoor_loot)
+	loot.world_seed = seed
+	zombies.set_drop_context(loot, seed) # zombie drops: ~1 in 3 kills
+	combat.choppables = neighborhood.choppable_trees
+	for t in neighborhood.choppable_trees:
+		(t as ChoppableTree).felled.connect(_on_tree_felled)
 
 	var safehouse := Safehouse.new()
 	safehouse.name = "Safehouse"
@@ -176,6 +182,12 @@ func _start_run(seed: int) -> void:
 	doors.barricades = barricades
 	zombies.barricades = barricades
 
+	# Interior zones: teleport triggers + the zombie director. Needs doors,
+	# barricades, zombies and the player — all of which exist now.
+	if neighborhood.interior_zones != null:
+		neighborhood.interior_zones.setup_runtime(player, zombies, doors,
+			barricades, noise, camera_rig)
+
 	inventory.hud = hud
 	inventory.visual = visual
 	inventory.wire_health()
@@ -199,6 +211,7 @@ func _start_run(seed: int) -> void:
 	add_child(waves)
 	waves.setup(time_manager, neighborhood, player, zombies, hud)
 	safehouse.waves = waves
+	loot.wave_manager = waves # wave scarcity: gun/ammo finds thin out
 
 	# QA pass: one searchable container inside every house. The police
 	# station key hides in one non-safehouse house (seeded pick).
@@ -266,6 +279,7 @@ func _start_run(seed: int) -> void:
 	craft_panel.name = "CraftingPanel"
 	craft_panel.setup(crafting)
 	add_child(craft_panel)
+	_craft_panel = craft_panel
 
 	safehouse.set_panels(craft_panel, stash_panel)
 
@@ -280,6 +294,8 @@ func _start_run(seed: int) -> void:
 	mmap.name = "Minimap"
 	add_child(mmap)
 	mmap.setup(player, visual, neighborhood, zombies, loot, safehouse)
+	if neighborhood.interior_zones != null:
+		mmap.set_zones(neighborhood.interior_zones)
 	_minimap_view = MinimapView.new()
 	_minimap_view.name = "MinimapView"
 	_minimap_view.setup(mmap)
@@ -288,6 +304,7 @@ func _start_run(seed: int) -> void:
 
 	hud.interact_pressed.connect(interact.try_interact)
 	hud.backpack_pressed.connect(_inv_panel.toggle)
+	hud.craft_pressed.connect(_craft_panel.toggle)
 	_connect_menu_signals()
 
 	# Audio hooks.
@@ -379,6 +396,25 @@ func _on_respawn(health: PlayerHealth, combat: PlayerCombat, survival: SurvivalS
 
 func _on_loot_granted(_items: Array, p: PlayerController) -> void:
 	Sound.play_3d("pickup", p.global_position)
+	# Loot-notice hardening: an unmissable center toast naming every item,
+	# on top of the 3D float labels. Silence is never acceptable here.
+	if _items.size() > 0:
+		var parts := PackedStringArray()
+		for it in _items:
+			parts.append("+%d %s" % [int(it[1]),
+				LootDefs.item_name(String(it[0])).to_upper()])
+		hud.show_pickup_toast("  ".join(parts))
+
+
+## Wood economy: a felled dead tree pays out its wood.
+func _on_tree_felled(tree: ChoppableTree, wood: int) -> void:
+	var inv := get_node("Inventory") as Inventory
+	inv.add(LootDefs.WOOD, wood)
+	var lm := get_node("Loot") as LootManager
+	lm._spawn_float_label(tree.global_position + Vector3(0, 1.4, 0),
+		"+%d WOOD" % wood)
+	hud.show_pickup_toast("+%d WOOD" % wood)
+	Sound.play_3d("pickup", tree.global_position)
 
 
 func _on_crafted(_recipe_id: String) -> void:

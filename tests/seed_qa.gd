@@ -5,12 +5,17 @@ extends SceneTree
 ## (tests/ is not exported; it lives only in the repo.)
 
 var _ran := false
+# Lazy load: NeighborhoodBuilder touches the Sound autoload (via
+# ChoppableTree); static class_name refs compile before autoloads register
+# in bare --script mode. (prompt_qa.gd precedent.)
+var _NB: GDScript
 
 
 func _process(_delta: float) -> bool:
 	if _ran:
 		return true
 	_ran = true
+	_NB = load("res://scripts/world/neighborhood_builder.gd")
 	var ok := true
 	# 1. Determinism: same seed => identical layout hash.
 	var h1 := _hash_for(48392017)
@@ -28,12 +33,12 @@ func _process(_delta: float) -> bool:
 	for seed in [48392017, 777, 12345678, 42, 99999999]:
 		ok = _check_invariants(seed, ok)
 	# 4. Rebuild same seed twice on one instance: identical node count.
-	var nb := NeighborhoodBuilder.new()
+	var nb: Node = _NB.new()
 	root.add_child(nb)
 	nb.build_world(555)
-	var c1 := nb.get_child_count()
+	var c1: int = nb.get_child_count()
 	nb.build_world(555)
-	var c2 := nb.get_child_count()
+	var c2: int = nb.get_child_count()
 	ok = _check("rebuild_stable", c1 > 100 and c1 == c2, ok)
 	nb.free()
 	print("SEEDQA_RESULT ok=", ok)
@@ -42,7 +47,7 @@ func _process(_delta: float) -> bool:
 
 
 func _hash_for(seed: int) -> String:
-	var nb := NeighborhoodBuilder.new()
+	var nb: Node = _NB.new()
 	root.add_child(nb)
 	nb.build_world(seed)
 	var h: String = nb.layout_hash()
@@ -51,12 +56,23 @@ func _hash_for(seed: int) -> String:
 
 
 func _interior_hash_for(seed: int) -> String:
-	var nb := NeighborhoodBuilder.new()
+	var nb: Node = _NB.new()
 	root.add_child(nb)
 	nb.build_world(seed)
 	var h: String = nb.interior_hash()
 	nb.free()
 	return h
+
+
+func _zone_origins_for(seed: int, _tag: String) -> Array:
+	var nb: Node = _NB.new()
+	root.add_child(nb)
+	nb.build_world(seed)
+	var out: Array = []
+	for z in (nb.get("interior_zones") as Node).get("zones"):
+		out.append((z as Dictionary)["origin"])
+	nb.free()
+	return out
 
 
 func _check(name: String, cond: bool, ok: bool) -> bool:
@@ -66,10 +82,10 @@ func _check(name: String, cond: bool, ok: bool) -> bool:
 
 func _check_invariants(seed: int, ok: bool) -> bool:
 	var tag := "seed_%d" % seed
-	var nb := NeighborhoodBuilder.new()
+	var nb: Node = _NB.new()
 	root.add_child(nb)
 	nb.build_world(seed)
-	var n := nb.houses.size()
+	var n: int = nb.houses.size()
 	ok = _check("houses_12_14_" + tag, n >= 12 and n <= 14, ok)
 	ok = _check("safehouse_idx_" + tag,
 		nb.safehouse_index >= 0 and nb.safehouse_index < n, ok)
@@ -132,15 +148,29 @@ func _check_invariants(seed: int, ok: bool) -> bool:
 	# Brutes only in the police station; interior walkers in other buildings.
 	ok = _check("brutes_2_" + tag, nb.brute_spawns.size() == 2, ok)
 	ok = _check("indoor_z_" + tag, nb.building_zombie_spawns.size() >= 4, ok)
-	var pb := {}
-	for b in nb.buildings:
-		if String((b as Dictionary)["kind"]) == "police":
-			pb = b
-	var pp := (pb as Dictionary)["pos"] as Vector3
+	# Zone phase: brutes spawn inside the police hidden zone, not the
+	# exterior footprint. Check them against the zone bounds.
+	var pzb := Rect2()
+	for z in (nb.get("interior_zones") as Node).get("zones"):
+		var zd := z as Dictionary
+		if String(zd["kind"]) == "police":
+			pzb = zd["bounds"] as Rect2
 	for bs in nb.brute_spawns:
-		if absf(bs.x - pp.x) > 8.0 or absf(bs.z - pp.z) > 6.0:
+		var bp := Vector2((bs as Vector3).x, (bs as Vector3).z)
+		if not pzb.grow(0.6).has_point(bp):
 			ok = _check("brutes_in_police_" + tag, false, ok)
 	ok = _check("interior_hash_" + tag, nb.interior_hash() != "", ok)
+	# Zone origins are deterministic: same seed => same origins, and they
+	# follow the documented far-zone layout (1200 + zi*500, 1200).
+	var origins: Array = []
+	for z in (nb.get("interior_zones") as Node).get("zones"):
+		origins.append((z as Dictionary)["origin"])
+	ok = _check("zone_origins_stable_" + tag,
+		origins == _zone_origins_for(seed, tag), ok)
+	for zi in origins.size():
+		var want := Vector3(1200.0 + float(zi) * 500.0, 0.0, 1200.0)
+		if (origins[zi] as Vector3).distance_to(want) > 0.01:
+			ok = _check("zone_origin_formula_" + tag, false, ok)
 	# No lot overlaps another lot or a road (the generator's own guarantee).
 	var rects: Array = nb._lot_rects
 	for i in rects.size():

@@ -23,6 +23,10 @@ var _frames := 0
 var _ok := true
 var _main: Node
 var _nb: Node # live NeighborhoodBuilder from the booted main scene
+# Lazy load: NeighborhoodBuilder touches the Sound autoload (via
+# ChoppableTree); static class_name refs compile before autoloads register
+# in bare --script mode. (prompt_qa.gd precedent.)
+var _NB: GDScript
 
 
 func _check(label: String, cond: bool) -> void:
@@ -37,6 +41,7 @@ func _process(_delta: float) -> bool:
 	if not _booted:
 		_booted = true
 		_static_anim_checks()
+		_NB = load("res://scripts/world/neighborhood_builder.gd")
 		_builder_determinism_checks()
 		root.get_node("RunState").set("world_seed", 48392017)
 		var ps := load("res://scenes/main.tscn") as PackedScene
@@ -89,10 +94,10 @@ func _static_anim_checks() -> void:
 # ------------------------------------------------- builder determinism
 func _builder_determinism_checks() -> void:
 	for seed in SEEDS:
-		var a := NeighborhoodBuilder.new()
+		var a: Node = _NB.new()
 		root.add_child(a)
 		a.build_world(seed)
-		var b := NeighborhoodBuilder.new()
+		var b: Node = _NB.new()
 		root.add_child(b)
 		b.build_world(seed)
 		_check("layout_hash_stable_%d" % seed, a.layout_hash() == b.layout_hash())
@@ -111,7 +116,7 @@ func _builder_determinism_checks() -> void:
 		and not block.contains("randf") and not block.contains("randi"))
 
 
-func _house_sig(nb: NeighborhoodBuilder) -> String:
+func _house_sig(nb: Node) -> String:
 	var parts: PackedStringArray = []
 	for hi in nb.houses.size():
 		var d := nb.houses[hi] as Dictionary
@@ -216,4 +221,13 @@ func _building_kind_at(pos: Vector3) -> String:
 		if Rect2(bp.x - w * 0.5, bp.z - dd * 0.5, w, dd).grow(0.5) \
 				.has_point(Vector2(pos.x, pos.z)):
 			return String(d["kind"])
+	# Zone phase: zoned buildings keep their loot in the hidden zone.
+	# Map zone positions back to the owning exterior building kind.
+	var iz: Node = _nb.get("interior_zones")
+	if iz != null:
+		for z in iz.get("zones"):
+			var zd := z as Dictionary
+			var zb := zd["bounds"] as Rect2
+			if zb.grow(0.6).has_point(Vector2(pos.x, pos.z)):
+				return String(zd["kind"])
 	return ""

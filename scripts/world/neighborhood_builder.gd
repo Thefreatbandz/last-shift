@@ -23,8 +23,12 @@ var _vrng := RandomNumberGenerator.new()
 # Loot RNG: seeded from the world seed but independent, so outdoor loot
 # variety/placement never shifts the layout RNG stream either.
 var _lrng := RandomNumberGenerator.new()
+# Chop RNG: own stream for choppable dead trees (wood economy), so tree
+# placement never shifts layout, visual, or loot RNG streams.
+var _crng := RandomNumberGenerator.new()
 var _time := 0.0
 var world_seed := -1 # the seed this neighborhood was built from (-1 = unbuilt)
+var choppable_trees: Array = [] # ChoppableTree nodes (wood economy)
 
 # Animated / night-driven materials.
 var _window_lit_mat: StandardMaterial3D
@@ -57,6 +61,7 @@ var building_zombie_spawns: Array[Vector3] = [] # interior Walker spawn points
 var _building_specs: Array = [] # seeded commercial lots: {kind, pos, face, w, d, h}
 var _interior_parts: Array[String] = [] # seeded interior feature tags (for hash)
 var _bx_mats: Dictionary = {} # material lookup for BuildingTypes
+var interior_zones: InteriorZones = null # hidden interior zones (compound-inside)
 
 # Seeded-generation layout state (filled by build_world).
 var zombie_spawns: Array[Vector3] = [] # 6 scatter points for the zombie pack
@@ -161,6 +166,7 @@ func build_world(seed: int) -> void:
 	_rng.seed = seed
 	_vrng.seed = seed ^ 0x9E3779B9
 	_lrng.seed = seed ^ 0xC10C41
+	_crng.seed = seed ^ 0x5EED71
 	_layout_roads()
 	_layout_gas_station()
 	_layout_house_lots() # lots first: grass/debris/scatter can reject them
@@ -179,6 +185,7 @@ func build_world(seed: int) -> void:
 	_build_props()
 	_build_silhouettes()
 	_build_treeline() # dense forest wall at the boundary: "forest beyond"
+	_build_choppables() # dead trees you can chop for wood (own RNG stream)
 	_build_boundary()
 	_layout_safehouse_info() # sets player_start / safehouse_porch
 	_layout_zombie_spawns()
@@ -192,10 +199,12 @@ func _clear_world() -> void:
 	houses.clear()
 	safehouse_boards.clear()
 	safehouse_door_pivot = null
+	interior_zones = null # freed with the other children above; rebuilt next
 	zombie_spawns.clear()
 	buildings.clear()
 	building_loot.clear()
 	outdoor_loot.clear()
+	choppable_trees.clear()
 	brute_spawns.clear()
 	building_zombie_spawns.clear()
 	_building_specs.clear()
@@ -444,6 +453,8 @@ func _loot_table(kind: String) -> Array:
 				t.append(["cloth", 1])
 			if _lrng.randf() < 0.25:
 				t.append(["canned_food", 1])
+			if _lrng.randf() < 0.20:
+				t.append(["water", 1])
 			if _lrng.randf() < 0.25:
 				t.append(["wood", _lrng.randi_range(1, 2)]) # wave loop: barricades
 			return t
@@ -574,6 +585,16 @@ func _layout_building_lots() -> void:
 func _build_commercial() -> void:
 	var bt := BuildingTypes.new()
 	bt.build(self, _building_specs)
+	# Hidden interior zones for the zoned kinds (police, hospital,
+	# warehouse, office_tall): built LAST in the world-gen order so their
+	# seeded draws never shift the map layout. Zone loot / brute / walker
+	# spawns flow through the normal channels (bx_add_loot, bx_brute,
+	# bx_zombie) so counts and container ids keep their meaning.
+	if interior_zones == null:
+		interior_zones = InteriorZones.new()
+		interior_zones.name = "InteriorZones"
+		add_child(interior_zones)
+	interior_zones.build(self)
 
 
 # --------------------------------- public build API for BuildingTypes ----
@@ -1967,6 +1988,42 @@ func _build_nature_v2() -> void:
 ## Dense treeline ringing the neighborhood edge — the visible natural
 ## boundary ("forest beyond"): dark, thick, swallowing the road ends.
 ## Three MultiMesh draw calls total. (Cosmetic: _vrng only.)
+func _build_choppables() -> void:
+	# Wood economy: dead trees you can chop (2 hits -> 2-3 wood). Eight
+	# scattered on open ground, eight hugging the forest edge. Own RNG
+	# stream (_crng) so placement never shifts layout/visual/loot streams.
+	choppable_trees.clear()
+	var placed := 0
+	var tries := 0
+	while placed < 8 and tries < 400:
+		tries += 1
+		var p := Vector3(_crng.randf_range(-85, 85), 0, _crng.randf_range(-85, 85))
+		if _on_road(p, 2.0) or _point_in_lots(p, 2.0):
+			continue
+		if p.distance_to(player_start) < 8.0:
+			continue
+		_add_choppable(p)
+		placed += 1
+	placed = 0
+	tries = 0
+	while placed < 8 and tries < 400:
+		tries += 1
+		var a := _crng.randf() * TAU
+		var r := _crng.randf_range(68.0, 84.0)
+		var p := Vector3(cos(a) * r, 0, sin(a) * r)
+		if _on_road(p, 2.5) or _point_in_lots(p, 2.5):
+			continue
+		_add_choppable(p)
+		placed += 1
+
+
+func _add_choppable(p: Vector3) -> void:
+	var t := ChoppableTree.new()
+	add_child(t)
+	t.build(Vector3(p.x, 0, p.z), _crng.randf_range(0.9, 1.2), _crng.randi())
+	choppable_trees.append(t)
+
+
 func _build_treeline() -> void:
 	var trunk_mesh := CylinderMesh.new()
 	trunk_mesh.top_radius = 0.14

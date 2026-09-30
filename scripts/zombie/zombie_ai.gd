@@ -1,5 +1,7 @@
 class_name ZombieAI
 extends CharacterBody3D
+
+signal died(z: ZombieAI) # loot loop: ~1 in 3 deaths drops ammo/parts
 ## Phase 2 walker brain: WANDER -> SUSPICIOUS -> CHASE -> ATTACK -> LOSE.
 ## Vision cone + range (night: farther, wider; flashlight gives the player
 ## away from much farther). Hearing via NoiseBus. Simple steering with
@@ -79,10 +81,18 @@ var _dir := Vector3.ZERO
 var _last_launch := 1.0 # ragdoll launch factor of the killing blow
 var _ragdoll: ProcRagdoll = null # live ragdoll, if the active cap allowed one
 
+# Interior-zones hook: when set, pursuit steering (CHASE and SUSPICIOUS)
+# targets this instead of the player / stimulus — e.g. to walk a zombie
+# to a building door so it crosses the interior-zone threshold. Pounding
+# always wins over the override (the director clears it first).
+var steer_override := Vector3.ZERO
+var has_steer_override := false
+
 @onready var visual: ZombieVisual = $Visual
 
 
 func _ready() -> void:
+	add_to_group("zombie")
 	floor_snap_length = 0.3
 	spawn_pos = global_position
 	_wander_target = global_position
@@ -120,6 +130,8 @@ func reset() -> void:
 	_attack_hit_t = -1.0
 	_pound_cd = 0.0
 	_pound_hit_t = -1.0
+	steer_override = Vector3.ZERO
+	has_steer_override = false
 	global_position = spawn_pos
 	velocity = Vector3.ZERO
 	rotation = Vector3.ZERO
@@ -188,6 +200,7 @@ func _die() -> void:
 		visual.set_ragdolled()
 	else:
 		visual.play_death() # fold into a crumple as the body falls
+	died.emit(self)
 
 
 func _physics_process(delta: float) -> void:
@@ -384,6 +397,13 @@ func _do_suspicious(delta: float) -> void:
 		return
 	_to = _stimulus - global_position
 	_to.y = 0.0
+	# Interior zones: steer to the override (a door) instead of the
+	# stimulus when the director has one set.
+	var tgt := _stimulus
+	if has_steer_override:
+		tgt = steer_override
+		_to = tgt - global_position
+		_to.y = 0.0
 	if _to.length() < 1.2:
 		# Arrived: look around, then give up.
 		_look_t += delta
@@ -397,7 +417,7 @@ func _do_suspicious(delta: float) -> void:
 			_wander_t = 0.0
 	else:
 		_look_t = 0.0
-		_steer(delta, _stimulus, lerpf(1.6, 2.2, _night_f))
+		_steer(delta, tgt, lerpf(1.6, 2.2, _night_f))
 
 
 func _do_chase(delta: float) -> void:
@@ -420,8 +440,12 @@ func _do_chase(delta: float) -> void:
 	if dist < ATTACK_RANGE:
 		state = State.ATTACK
 		return
-	_face(player.global_position)
-	_steer(delta, player.global_position, lerpf(CHASE_DAY, CHASE_NIGHT, _night_f) * spd_mult)
+	# Interior zones: chase the override (a door) instead of the player.
+	var tgt := player.global_position
+	if has_steer_override:
+		tgt = steer_override
+	_face(tgt)
+	_steer(delta, tgt, lerpf(CHASE_DAY, CHASE_NIGHT, _night_f) * spd_mult)
 
 
 ## Wave loop: a closed door (boarded or not) between the zombie and the

@@ -10,6 +10,10 @@ extends SceneTree
 
 var _ran := false
 var _ok := true
+# Lazy load: NeighborhoodBuilder touches the Sound autoload (via
+# ChoppableTree); static class_name refs compile before autoloads register
+# in bare --script mode. (prompt_qa.gd precedent.)
+var _NB: GDScript
 
 const EXPECT_KINDS := {
 	"trash": 5, "corpse": 2, "fresh_corpse": 2, "toolbox": 2,
@@ -27,9 +31,10 @@ func _process(_delta: float) -> bool:
 	if _ran:
 		return true
 	_ran = true
-	_check("map_half_100", is_equal_approx(NeighborhoodBuilder.MAP_HALF, 100.0))
+	_NB = load("res://scripts/world/neighborhood_builder.gd")
+	_check("map_half_100", is_equal_approx(_NB.MAP_HALF, 100.0))
 	_check("minimap_half_match",
-		is_equal_approx(MinimapModel.HALF, NeighborhoodBuilder.MAP_HALF))
+		is_equal_approx(MinimapModel.HALF, _NB.MAP_HALF))
 	for seed in [48392017, 777, 12345678]:
 		_check_seed(seed)
 	# Determinism: rebuild seed 48392017 => identical outdoor loot.
@@ -44,10 +49,10 @@ func _process(_delta: float) -> bool:
 
 func _check_seed(seed: int) -> void:
 	var tag := "seed_%d" % seed
-	var nb := NeighborhoodBuilder.new()
+	var nb: Node = _NB.new()
 	root.add_child(nb)
 	nb.build_world(seed)
-	var n := nb.houses.size()
+	var n: int = nb.houses.size()
 	_check("houses_12_14_" + tag, n >= 12 and n <= 14)
 	_check("zspawns_10_" + tag, nb.zombie_spawns.size() == 10)
 	for s in nb.zombie_spawns:
@@ -57,7 +62,7 @@ func _check_seed(seed: int) -> void:
 			_check("zspawn_in_bounds_" + tag, false)
 	# Outdoor loot: exact count, expected kind mix, all spots reachable.
 	var ol: Array = nb.outdoor_loot
-	_check("outdoor_count_" + tag, ol.size() == NeighborhoodBuilder.OUTDOOR_LOOT_COUNT)
+	_check("outdoor_count_" + tag, ol.size() == _NB.OUTDOOR_LOOT_COUNT)
 	var kinds := {}
 	for e in ol:
 		var ed := e as Dictionary
@@ -81,7 +86,7 @@ func _check_seed(seed: int) -> void:
 
 
 func _loot_sig(seed: int) -> String:
-	var nb := NeighborhoodBuilder.new()
+	var nb: Node = _NB.new()
 	root.add_child(nb)
 	nb.build_world(seed)
 	var parts: Array[String] = []

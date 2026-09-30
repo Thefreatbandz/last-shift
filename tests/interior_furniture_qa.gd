@@ -21,6 +21,11 @@ var _probe_rect := Rect2()
 var _probe_entered := false
 var _probe_nearest := 999.0
 var _probe_house := 0
+# Lazy load: NeighborhoodBuilder/InteriorZones touch the Sound autoload;
+# static class_name refs compile before autoloads register in bare
+# --script mode. (prompt_qa.gd precedent.)
+var _NB: GDScript
+var _IZ: GDScript
 
 
 func _check(label: String, cond: bool) -> void:
@@ -34,6 +39,8 @@ func _check(label: String, cond: bool) -> void:
 func _process(_delta: float) -> bool:
 	if not _booted:
 		_booted = true
+		_NB = load("res://scripts/world/neighborhood_builder.gd")
+		_IZ = load("res://scripts/world/interior_zones.gd")
 		_builder_checks()
 		root.get_node("RunState").set("world_seed", 48392017)
 		var ps := load("res://scenes/main.tscn") as PackedScene
@@ -64,7 +71,7 @@ func _process(_delta: float) -> bool:
 
 func _builder_checks() -> void:
 	for seed in SEEDS:
-		var nb := NeighborhoodBuilder.new()
+		var nb: Node = _NB.new()
 		root.add_child(nb)
 		nb.build_world(seed)
 		_check("layout_hash_stable_%d" % seed,
@@ -80,27 +87,60 @@ func _builder_checks() -> void:
 				if not _inside_rect(a, rect, EPS):
 					_check("house_%d_%d_inside_%s" % [hi, seed, (p as Node).name], false)
 		# Commercial buildings: kinds are unique, roots are bld_<kind>.
+		# Zoned kinds are hollow SHELLS outside (no furniture); their real
+		# interiors live in the hidden zones (checked below).
 		for b in nb.buildings:
 			var bd := b as Dictionary
-			var broot := nb.get_node_or_null("bld_" + String(bd["kind"])) as Node3D
+			var kind := String(bd["kind"])
+			var broot := nb.get_node_or_null("bld_" + kind) as Node3D
 			if broot == null:
-				_check("bld_root_%s_%d" % [String(bd["kind"]), seed], false)
+				_check("bld_root_%s_%d" % [kind, seed], false)
 				continue
 			var rect := _footprint(bd)
 			var pieces := _tagged_furniture(broot)
-			_check("bld_%s_has_furniture_%d" % [String(bd["kind"]), seed],
+			if _IZ.is_zoned_kind(kind):
+				_check("bld_%s_shell_empty_%d" % [kind, seed], pieces.size() == 0)
+				continue
+			_check("bld_%s_has_furniture_%d" % [kind, seed],
 				pieces.size() >= 2)
 			for p in pieces:
 				var a := _world_aabb(p as Node3D)
 				if not _inside_rect(a, rect, EPS):
-					_check("bld_%s_%d_inside_%s" % [String(bd["kind"]), seed, (p as Node).name], false)
-		# Building loot + indoor zombie spawns must be inside some building.
+					_check("bld_%s_%d_inside_%s" % [kind, seed, (p as Node).name], false)
+		# Hidden interior zones: furniture must sit inside the zone bounds,
+		# and every zone must be furnished (compound on the inside).
+		if nb.interior_zones != null:
+			for z in nb.interior_zones.zones:
+				var zd := z as Dictionary
+				var zkind := String(zd["kind"])
+				var zbounds := zd["bounds"] as Rect2
+				var zpieces := _tagged_furniture(zd["root"] as Node3D)
+				_check("zone_%s_has_furniture_%d" % [zkind, seed],
+					zpieces.size() >= 4)
+				for p in zpieces:
+					var a := _world_aabb(p as Node3D)
+					if not _inside_rect(a, zbounds, EPS):
+						_check("zone_%s_%d_inside_%s" % [zkind, seed, (p as Node).name], false)
+		# Building loot + indoor zombie spawns: zone loot/spawns live in
+		# zone bounds; everything else in building footprints.
 		var rects: Array = []
 		for b in nb.buildings:
-			rects.append(_footprint(b as Dictionary))
+			var bd2 := b as Dictionary
+			if _IZ.is_zoned_kind(String(bd2["kind"])):
+				continue
+			rects.append(_footprint(bd2))
+		if nb.interior_zones != null:
+			for z in nb.interior_zones.zones:
+				rects.append((z as Dictionary)["bounds"])
 		for li in nb.building_loot.size():
-			var lp := (nb.building_loot[li] as Dictionary)["pos"] as Vector3
-			_check("loot_%d_%d_inside" % [li, seed], _inside_any(lp, rects, 0.0))
+			var ld := nb.building_loot[li] as Dictionary
+			var lp := ld["pos"] as Vector3
+			if String(ld.get("kind", "")) == "lumber":
+				# Lumber piles sit out front of the warehouse by design.
+				_check("loot_%d_%d_lumber_near_wh" % [li, seed],
+					_near_kind(lp, nb.buildings, "warehouse", 7.0))
+			else:
+				_check("loot_%d_%d_inside" % [li, seed], _inside_any(lp, rects, 0.0))
 		for zi in nb.building_zombie_spawns.size():
 			var zp := nb.building_zombie_spawns[zi] as Vector3
 			_check("zspawn_%d_%d_inside" % [zi, seed], _inside_any(zp, rects, 0.0))
@@ -108,10 +148,10 @@ func _builder_checks() -> void:
 
 
 func _hash_of(seed: int) -> String:
-	var nb2 := NeighborhoodBuilder.new()
+	var nb2: Node = _NB.new()
 	root.add_child(nb2)
 	nb2.build_world(seed)
-	var hsh := nb2.layout_hash()
+	var hsh: String = nb2.layout_hash()
 	nb2.free()
 	return hsh
 
@@ -121,6 +161,17 @@ func _footprint(d: Dictionary) -> Rect2:
 	var w := float(d["w"])
 	var dd := float(d["d"])
 	return Rect2(p.x - w * 0.5, p.z - dd * 0.5, w, dd)
+
+
+func _near_kind(p: Vector3, buildings: Array, kind: String, margin: float) -> bool:
+	for b in buildings:
+		var bd := b as Dictionary
+		if String(bd.get("kind", "")) != kind:
+			continue
+		var r := _footprint(bd).grow(margin)
+		if r.has_point(Vector2(p.x, p.z)):
+			return true
+	return false
 
 
 func _tagged_furniture(n: Node3D) -> Array:

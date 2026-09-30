@@ -10,6 +10,7 @@ extends CanvasLayer
 signal respawn_requested
 signal interact_pressed # touch USE button
 signal backpack_pressed # touch backpack button
+signal craft_pressed # touch crafting button
 signal menu_pressed # top-right MENU button (pause)
 signal new_game_pressed # menu: start a fresh seeded neighborhood
 signal continue_pressed # menu: resume the current run
@@ -50,6 +51,7 @@ var _dehy_vignette: ColorRect
 var _prompt_label: Label
 var _use_btn: Button
 var _pack_btn: Button
+var _craft_btn: Button
 var _work_label: Label
 var _work_bg: ColorRect
 var _work_fill: ColorRect
@@ -59,6 +61,10 @@ var _fade: ColorRect
 var _toast: Label
 var _toast_sub: Label
 var _toast_t := 0.0
+# Loot-notice hardening: dedicated pickup toast, separate from the wave
+# banner toast so a pickup never stomps a wave banner (or vice versa).
+var _pickup_label: Label
+var _pickup_t := 0.0
 
 # Title / pause menu: seed display, NEW GAME (new neighborhood), CONTINUE.
 var _hud_root: Control
@@ -418,6 +424,33 @@ func _ready() -> void:
 	_pack_btn.button_down.connect(func() -> void: backpack_pressed.emit())
 	root.add_child(_pack_btn)
 
+	# --- Touch crafting button (top-right, under PACK) ---
+	_craft_btn = Button.new()
+	_craft_btn.text = "CRAFT"
+	_craft_btn.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_craft_btn.offset_left = -92
+	_craft_btn.offset_top = 74
+	_craft_btn.offset_right = -16
+	_craft_btn.offset_bottom = 126
+	_craft_btn.focus_mode = Control.FOCUS_NONE
+	_craft_btn.add_theme_font_size_override("font_size", 16)
+	var cb := StyleBoxFlat.new()
+	cb.bg_color = Color(0.10, 0.11, 0.13, 0.70)
+	cb.set_corner_radius_all(10)
+	cb.border_width_left = 2
+	cb.border_width_right = 2
+	cb.border_width_top = 2
+	cb.border_width_bottom = 2
+	cb.border_color = Color(0.45, 0.38, 0.28, 0.9)
+	_craft_btn.add_theme_stylebox_override("normal", cb)
+	var cb2 := cb.duplicate() as StyleBoxFlat
+	cb2.bg_color = Color(0.20, 0.21, 0.23, 0.85)
+	_craft_btn.add_theme_stylebox_override("pressed", cb2)
+	_craft_btn.add_theme_stylebox_override("hover", cb)
+	_craft_btn.visible = false
+	_craft_btn.button_down.connect(func() -> void: craft_pressed.emit())
+	root.add_child(_craft_btn)
+
 	# --- MENU button (top-right, next to PACK): pause / seed / new game ---
 	_hud_menu_btn = Button.new()
 	_hud_menu_btn.text = "MENU"
@@ -506,6 +539,23 @@ func _ready() -> void:
 	_toast_sub.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_toast_sub.visible = false
 	toast_vbox.add_child(_toast_sub)
+	# Pickup toast: sits below the wave-banner zone, big enough to be
+	# unmissable on a phone, small enough not to fight the banner.
+	_pickup_label = Label.new()
+	_pickup_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_pickup_label.add_theme_font_size_override("font_size", 22)
+	_pickup_label.add_theme_color_override("font_color", Color(1.0, 0.93, 0.68))
+	_pickup_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
+	_pickup_label.add_theme_constant_override("shadow_offset_x", 2)
+	_pickup_label.add_theme_constant_override("shadow_offset_y", 2)
+	_pickup_label.set_anchors_preset(Control.PRESET_CENTER)
+	_pickup_label.offset_left = -320
+	_pickup_label.offset_right = 320
+	_pickup_label.offset_top = 96
+	_pickup_label.offset_bottom = 140
+	_pickup_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_pickup_label.visible = false
+	root.add_child(_pickup_label)
 
 
 ## Title / pause menu: full-screen overlay with the neighborhood seed,
@@ -676,6 +726,7 @@ func _input(event: InputEvent) -> void:
 		_touch_hint.visible = true
 		_touch_hint_t = 6.0
 		_hint_label.visible = false
+		_craft_btn.visible = true
 		_refresh_prompt_visibility()
 
 
@@ -718,6 +769,10 @@ func _process(delta: float) -> void:
 		if _toast_t <= 0.0:
 			_toast.visible = false
 			_toast_sub.visible = false
+	if _pickup_t > 0.0:
+		_pickup_t -= delta
+		if _pickup_t <= 0.0:
+			_pickup_label.visible = false
 	if _msg_t > 0.0:
 		_msg_t -= delta
 		if _msg_t <= 0.0 and not _interact_prompt_active:
@@ -787,6 +842,15 @@ func show_slept_teaser() -> void:
 	_toast.visible = true
 	_toast_sub.visible = true
 	_toast_t = 3.2
+
+
+## Loot-notice hardening: unmissable center toast whenever loot is granted
+## ("+2 SCRAP  +1 CLOTH"). Lives on its own label so it never stomps the
+## wave banner or the interact prompt.
+func show_pickup_toast(text: String, duration := 2.2) -> void:
+	_pickup_label.text = text
+	_pickup_label.visible = true
+	_pickup_t = duration
 
 
 ## Wave loop: big center banner for NIGHT FALLS / WAVE SURVIVED events.

@@ -47,15 +47,25 @@ func _ready() -> void:
 	panel.add_child(vbox)
 
 	var title := Label.new()
-	title.text = "WORKBENCH"
+	title.text = "CRAFTING"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.add_theme_font_size_override("font_size", 20)
 	title.add_theme_color_override("font_color", Color(0.95, 0.88, 0.70))
 	vbox.add_child(title)
 
+	var scroll := ScrollContainer.new()
+	scroll.name = "RecipeScroll"
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	# Always show the bar: touch-drag scrolls on phones, wheel on PC.
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_ALWAYS
+	vbox.add_child(scroll)
+	_style_scrollbar(scroll)
+
 	_rows = VBoxContainer.new()
+	_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_rows.add_theme_constant_override("separation", 8)
-	vbox.add_child(_rows)
+	scroll.add_child(_rows)
 
 	var close := Button.new()
 	close.text = "CLOSE"
@@ -68,6 +78,13 @@ func _ready() -> void:
 
 func is_open() -> bool:
 	return _open
+
+
+func toggle() -> void:
+	if _open:
+		close_panel()
+	else:
+		open()
 
 
 func open() -> void:
@@ -92,6 +109,25 @@ func _on_crafted(_id: String) -> void:
 func _on_changed() -> void:
 	if _open:
 		_refresh()
+
+
+## Slim, always-visible scrollbar to match the panel. Touch-drag scrolls on
+## phones and the mouse wheel on PC — both handled natively by ScrollContainer.
+## Buttons inside still tap normally: a clean tap presses, a drag scrolls.
+func _style_scrollbar(scroll: ScrollContainer) -> void:
+	var bar := scroll.get_v_scroll_bar()
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color(1, 1, 1, 0.06)
+	bg.set_corner_radius_all(4)
+	bar.add_theme_stylebox_override("scroll", bg)
+	var grab := StyleBoxFlat.new()
+	grab.bg_color = Color(0.75, 0.65, 0.40, 0.55)
+	grab.set_corner_radius_all(4)
+	grab.content_margin_left = 3
+	grab.content_margin_right = 3
+	bar.add_theme_stylebox_override("grabber", grab)
+	bar.add_theme_stylebox_override("grabber_highlight", grab)
+	bar.add_theme_stylebox_override("grabber_pressed", grab)
 
 
 func _refresh() -> void:

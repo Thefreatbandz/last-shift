@@ -99,7 +99,12 @@ func _spawn_wave(n: int) -> void:
 	wave_zombies.clear()
 	var rng := RandomNumberGenerator.new()
 	rng.seed = _hood.world_seed * 7919 + n * 131 + 17
+	# Interior zones: the wave spawns around the zone's exterior door and
+	# converges on it — never in the void around the hidden offset. The
+	# director steers them through the open door once they arrive.
 	var pp := _player.global_position
+	if _hood.interior_zones != null:
+		pp = _hood.interior_zones.wave_anchor(pp)
 	var count := wave_size(n)
 	for i in count:
 		var p := _edge_spawn(rng, pp)

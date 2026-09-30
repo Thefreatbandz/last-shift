@@ -26,6 +26,15 @@ var _searching := false
 var _search_t := 0.0
 var _search_target: LootContainer
 
+# Wave scarcity: gun/ammo finds thin out at higher waves (Tbandz's call),
+# while crafting stays constant. Set by the bootstrap once waves exist.
+var wave_manager = null
+var world_seed := 0
+
+# Item ids touched by wave scarcity.
+const SCARCE_AMMO := ["ammo_9mm", "shells", "ammo"]
+const SCARCE_GUNS := ["pistol", "shotgun", "rifle"]
+
 
 func setup(p: PlayerController, visual: PlayerVisual, inv: Inventory,
 		interact: InteractManager, hud: Hud, outdoor_spots: Array) -> void:
@@ -49,6 +58,7 @@ func _spawn_containers(outdoor_spots: Array) -> void:
 func add_container(pos: Vector3, items: Array, kind := "crate") -> LootContainer:
 	var c := LootContainer.new()
 	c.position = pos
+	c.container_id = _containers.size() # build-order index, deterministic
 	add_child(c)
 	c.build(items, kind)
 	_containers.append(c)
@@ -107,12 +117,54 @@ func _finish_search() -> void:
 	_interact.set_enabled(int(_ids[c]), false)
 	_visual.play_pickup()
 	_spawn_sparkle(c.global_position + Vector3(0, 0.9, 0))
-	for it in c.loot:
+	var grant := _apply_scarcity(c.loot, c.container_id)
+	if grant.is_empty() and c.loot.size() > 0:
+		# Belt and suspenders: scarcity replaces items but never drops them,
+		# so this should be unreachable — but an empty search must never be
+		# silent. Tell the player outright.
+		_hud.show_pickup_toast("NOTHING FOUND")
+	for it in grant:
 		var id := String(it[0])
 		var n := int(it[1])
 		_inventory.add(id, n)
 		_spawn_float_label(c.global_position + Vector3(0, 1.1, 0), "+%d %s" % [n, LootDefs.item_name(id).to_upper()])
-	loot_granted.emit(c.loot)
+	loot_granted.emit(grant)
+
+
+## Wave scarcity: at higher waves, ammo finds shrink and guns may be gone
+## (replaced with scrap — "picked clean"). Deterministic: rolls key off
+## (world_seed, container_id, wave), never the shared RNG streams.
+func _scarcity_wave() -> int:
+	var w := 1
+	if wave_manager != null:
+		w = int(wave_manager.wave_number) + (1 if wave_manager.wave_active() else 0)
+	return maxi(w, 1)
+
+
+func _apply_scarcity(items: Array, cid: int) -> Array:
+	var w := _scarcity_wave()
+	if w <= 1:
+		return items
+	var tier := mini(w - 1, 3) # 1..3
+	var ammo_f: float = [1.0, 0.75, 0.5, 0.35][tier]
+	var gun_keep: float = [1.0, 0.8, 0.6, 0.4][tier]
+	var rng := RandomNumberGenerator.new()
+	rng.seed = world_seed * 31 + cid * 101 + w * 7 + 1
+	var out: Array = []
+	for e in items:
+		var id := String(e[0])
+		var n := int(e[1])
+		if id in SCARCE_AMMO:
+			n = maxi(1, int(roundf(n * ammo_f)))
+			out.append([id, n])
+		elif id in SCARCE_GUNS:
+			if rng.randf() < gun_keep:
+				out.append([id, n])
+			else:
+				out.append(["scrap", 2]) # someone got here first
+		else:
+			out.append([id, n])
+	return out
 
 
 func _spawn_sparkle(pos: Vector3) -> void:

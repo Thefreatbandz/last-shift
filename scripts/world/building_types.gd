@@ -392,14 +392,14 @@ func _entry(spec: Dictionary, roof_g: Node3D, door: Dictionary) -> Dictionary:
 # ------------------------------------------------------------ police
 
 func _build_police(hood: NeighborhoodBuilder, spec: Dictionary) -> Dictionary:
-	var rng := hood.bx_rng()
+	# SHELL ONLY (interior-zones phase): the compound lives in the hidden
+	# zone; the exterior keeps walls, roof, door + blocker, sign, windows.
 	var root := _base(hood, spec)
 	var w: float = spec["w"]
 	var d: float = spec["d"]
 	var h: float = spec["h"]
 	var face: float = spec["face"]
 	var fd := face
-	var bd := -face
 	_walls(hood, root, face, w, d, h, 0.35,
 		hood.bx_std(Color(0.38, 0.44, 0.52), 0.9))
 	var roof_g := _flat_roof(hood, root, w, d, h,
@@ -413,55 +413,22 @@ func _build_police(hood: NeighborhoodBuilder, spec: Dictionary) -> Dictionary:
 	for wx in [-4.2, 4.2]:
 		_barred_window(hood, root, Vector3(wx, 1.9, fz + fd * 0.06), Vector3(0, 0, fd))
 	_barred_window(hood, root, Vector3(0, 1.9, -fz - fd * 0.06), Vector3(0, 0, -fd))
-	# Holding cells: two cells along the back wall, left or right side.
-	var cell_side := -1.0 if rng.randf() < 0.5 else 1.0
-	var cw := 2.6
-	var cd := 2.4
-	var cz := bd * (d * 0.5 - 0.35 - cd * 0.5)
-	var cx0 := cell_side * (w * 0.5 - 0.35 - cw * 0.5)
-	for ci in 2:
-		_cell(hood, root, cx0 - cell_side * ci * cw, cz, cw, cd, fd)
-	# Front desk counter + a desk behind it (seeded x offset).
-	var dx := rng.randf_range(-2.0, 2.0)
-	var dz := fd * (d * 0.5 - 3.0)
-	hood.bx_furn(hood.bx_solid_box(root, Vector3(3.0, 1.0, 0.8), Vector3(dx, 0.5, dz),
-		hood.bx_mat("counter")))
-	_desk(hood, root, Vector3(dx * 0.5, 0, fd * (d * 0.5 - 5.2)),
-		rng.randf_range(-0.3, 0.3))
-	# Armory: back corner opposite the cells, tall gun locker.
-	var arm_side := -cell_side
-	var ax := arm_side * (w * 0.5 - 1.6)
-	var az := bd * (d * 0.5 - 1.4)
-	hood.bx_furn(hood.bx_solid_box(root, Vector3(1.4, 2.2, 0.7), Vector3(ax, 1.1, az),
-		hood.bx_std(Color(0.16, 0.18, 0.16), 0.6, 0.3)))
-	_sign(hood, root, "ARMORY", Vector3(ax, 2.55, az + fd * 0.4),
-		Vector3(0, 0, fd), 1.7, 0.42, Color(0.12, 0.12, 0.12), Color(0.90, 0.85, 0.60))
-	# Loot: armory (inert Phase-B firearms/ammo) + lobby desk.
-	# Wave loop: the locker now holds a WORKING pistol and live 9mm rounds.
-	hood.bx_add_loot(root.position + Vector3(ax, 0.6, az + fd * 0.9),
-		[["rifle", 1], ["ammo", 2], ["pistol", 1], ["ammo_9mm", 12], ["scrap", 2]])
-	hood.bx_add_loot(root.position + Vector3(dx, 0.6, dz + fd * 0.9),
-		[["cloth", 2], ["water", 1]])
-	# Brutes: one pacing the cell block, one guarding the armory.
-	hood.bx_brute(root.position + Vector3(cx0 - cell_side * cw * 0.5, 0.3,
-		cz + fd * (cd * 0.5 + 0.8)))
-	hood.bx_brute(root.position + Vector3(ax, 0.3, az + fd * 1.8))
-	hood.bx_track_interior("police|cells=%.0f|desk=%.1f|arm=%.0f"
-		% [cell_side, dx, arm_side])
+	hood.bx_track_interior("police|shell")
 	return _entry(spec, roof_g, door)
 
 
 # ------------------------------------------------------------ hospital
 
 func _build_hospital(hood: NeighborhoodBuilder, spec: Dictionary) -> Dictionary:
-	var rng := hood.bx_rng()
+	# SHELL ONLY (interior-zones phase): the compound lives in the hidden
+	# zone; the exterior keeps walls, roof, door, cross emblem + sign,
+	# windows. The veil stays on: nobody ever walks inside the footprint.
 	var root := _base(hood, spec)
 	var w: float = spec["w"]
 	var d: float = spec["d"]
 	var h: float = spec["h"]
 	var face: float = spec["face"]
 	var fd := face
-	var bd := -face
 	_walls(hood, root, face, w, d, h, 0.35,
 		hood.bx_std(Color(0.80, 0.80, 0.78), 0.9))
 	var roof_g := _flat_roof(hood, root, w, d, h,
@@ -477,49 +444,7 @@ func _build_hospital(hood: NeighborhoodBuilder, spec: Dictionary) -> Dictionary:
 		Vector3(0, 0, fd), 5.2, 1.0, Color(0.92, 0.92, 0.94), Color(0.70, 0.10, 0.10))
 	for wx in [-6.0, -3.0, 3.0, 6.0]:
 		hood.bx_window(root, Vector3(wx, 2.2, fz + fd * 0.05), Vector3(0, 0, fd), false)
-	# Lobby: reception counter + waiting chairs.
-	var cz := fd * (d * 0.5 - 2.6)
-	hood.bx_furn(hood.bx_solid_box(root, Vector3(4.0, 1.0, 0.9), Vector3(0, 0.5, cz),
-		hood.bx_mat("counter")))
-	for ci in 4:
-		var chx := -3.0 + 1.6 * ci
-		hood.bx_furn(hood.bx_box(root, Vector3(0.55, 0.08, 0.55),
-			Vector3(chx, 0.45, cz + fd * 2.2), hood.bx_mat("table")))
-		hood.bx_furn(hood.bx_box(root, Vector3(0.55, 0.60, 0.08),
-			Vector3(chx, 0.75, cz + fd * 2.45), hood.bx_mat("table")))
-	# Wards: two seeded partition layouts at the back.
-	var preset := rng.randi() % 2
-	var ward_z := bd * (d * 0.5 - 3.4)
-	if preset == 0:
-		hood.bx_furn(hood.bx_solid_box(root, Vector3(0.2, h - 0.4, 5.0),
-			Vector3(0, (h - 0.4) * 0.5, ward_z), hood.bx_mat("inner")))
-		_bed(hood, root, Vector3(-w * 0.25, 0, ward_z), 0.0, rng)
-		_bed(hood, root, Vector3(w * 0.25, 0, ward_z), 0.0, rng)
-	else:
-		_bed(hood, root, Vector3(-w * 0.25, 0, ward_z - 1.0), 0.2, rng)
-		_bed(hood, root, Vector3(w * 0.25, 0, ward_z + 1.0), -0.2, rng)
-		_bed(hood, root, Vector3(0.5, 0, ward_z - 1.6), -0.1, rng)
-	# Medicine cabinets on the back wall: shelf + red cross, searchable.
-	for csi in 2:
-		var sx := -2.5 + 5.0 * csi
-		var sz := bd * (d * 0.5 - 0.6)
-		hood.bx_box(root, Vector3(1.2, 0.9, 0.35), Vector3(sx, 1.7, sz),
-			hood.bx_mat("shelf"))
-		hood.bx_box(root, Vector3(0.5, 0.16, 0.05),
-			Vector3(sx, 1.7, sz + fd * 0.2), crossm)
-		hood.bx_box(root, Vector3(0.16, 0.5, 0.05),
-			Vector3(sx, 1.7, sz + fd * 0.2), crossm)
-		var items := [["medicine", 2], ["bandage", 1], ["health_kit", 1]] if csi == 0 \
-			else [["medicine", 1], ["bandage", 2], ["painkillers", 1]]
-		hood.bx_add_loot(root.position + Vector3(sx, 0.6, sz + fd * 0.9), items, "firstaid")
-	hood.bx_add_loot(root.position + Vector3(2.8, 0.6, cz + fd * 0.9),
-		[["cloth", 2], ["scrap", 1]])
-	# The wards are overrun: regular zombies inside.
-	for zi in 3:
-		hood.bx_zombie(root.position + Vector3(
-			rng.randf_range(-w * 0.3, w * 0.3), 0.3,
-			ward_z + rng.randf_range(-1.5, 1.5)))
-	hood.bx_track_interior("hospital|preset=%d" % preset)
+	hood.bx_track_interior("hospital|shell")
 	return _entry(spec, roof_g, door)
 
 
@@ -621,20 +546,26 @@ func _build_corner(hood: NeighborhoodBuilder, spec: Dictionary) -> Dictionary:
 # ------------------------------------------------------------ office tower
 
 func _build_office_tall(hood: NeighborhoodBuilder, spec: Dictionary) -> Dictionary:
-	var rng := hood.bx_rng()
+	# SHELL ONLY (interior-zones phase): the compound lives in the hidden
+	# zone; the exterior keeps walls, tower mass, door, sign, windows. The
+	# roof/tower stay on: the zone is entered through the real doorway.
+	# (Field report root cause: the old ground-floor ceiling was kept as a
+	# direct child of the building root, OUTSIDE the roof-hide group, so
+	# the angled camera saw a lid and the interior underneath never
+	# revealed. The zone design deletes that whole bug class: nobody ever
+	# stands inside the footprint, so the roof just stays on.)
 	var root := _base(hood, spec)
 	var w: float = spec["w"]
 	var d: float = spec["d"]
 	var h: float = spec["h"] # ground-floor height; tower rises above
 	var face: float = spec["face"]
 	var fd := face
-	var bd := -face
 	var wallm := hood.bx_std(Color(0.62, 0.62, 0.64), 0.9)
 	_walls(hood, root, face, w, d, h, 0.35, wallm)
-	# Ground-floor ceiling stays when the player is inside.
+	# Ground-floor ceiling + tower mass above (both stay on: the real
+	# interior is in the hidden zone, never inside this footprint).
 	hood.bx_box(root, Vector3(w + 0.4, 0.2, d + 0.4), Vector3(0, h + 0.1, 0),
 		hood.bx_mat("inner"))
-	# Tower mass above (hidden with the roof group when inside).
 	var roof_g := Node3D.new()
 	root.add_child(roof_g)
 	var upper_h := 6.6
@@ -656,47 +587,24 @@ func _build_office_tall(hood: NeighborhoodBuilder, spec: Dictionary) -> Dictiona
 		Vector3(0, 0, fd), 4.2, 0.9, Color(0.18, 0.22, 0.30), Color(0.90, 0.92, 0.95))
 	hood.bx_window(root, Vector3(-3.4, 1.8, fz + fd * 0.05), Vector3(0, 0, fd), false)
 	hood.bx_window(root, Vector3(3.4, 1.8, fz + fd * 0.05), Vector3(0, 0, fd), false)
-	# Lobby: reception desk, side offices with desks.
-	hood.bx_furn(hood.bx_solid_box(root, Vector3(3.2, 1.0, 0.9),
-		Vector3(0, 0.5, fd * (d * 0.5 - 2.4)), hood.bx_mat("counter")))
-	_desk(hood, root, Vector3(-w * 0.28, 0, bd * 1.5), rng.randf_range(-0.4, 0.4))
-	_desk(hood, root, Vector3(w * 0.28, 0, bd * 1.5), rng.randf_range(-0.4, 0.4))
-	hood.bx_furn(hood.bx_solid_box(root, Vector3(0.2, h - 0.4, 4.0),
-		Vector3(-w * 0.14, (h - 0.4) * 0.5, bd * 2.5), hood.bx_mat("inner")))
-	hood.bx_furn(hood.bx_solid_box(root, Vector3(0.2, h - 0.4, 4.0),
-		Vector3(w * 0.14, (h - 0.4) * 0.5, bd * 2.5), hood.bx_mat("inner")))
-	# Stairwell: blocked by a rubble pile (kept off the back wall).
-	var stx := 0.0
-	var stz := bd * (d * 0.5 - 0.8)
-	for ri in 5:
-		var rz := stz + rng.randf_range(-0.6, 0.1)
-		hood.bx_furn(hood.bx_box(root, Vector3(0.7, 0.5, 0.6),
-			Vector3(stx + rng.randf_range(-0.8, 0.8), 0.25 + 0.3 * (ri % 2), rz),
-			hood.bx_std(Color(0.42, 0.40, 0.38), 0.95),
-			rng.randf_range(0.0, 1.2)))
-	# Crafting supplies / scrap + a little food.
-	hood.bx_add_loot(root.position + Vector3(-w * 0.28, 0.6, bd * 0.6),
-		[["scrap", 2], ["cloth", 1]], "duffel")
-	hood.bx_add_loot(root.position + Vector3(w * 0.28, 0.6, bd * 0.6),
-		[["water", 1], ["canned_food", 1]])
-	# One office worker still at their desk.
-	hood.bx_zombie(root.position + Vector3(
-		rng.randf_range(-3.0, 3.0), 0.3, bd * rng.randf_range(1.0, 3.0)))
-	hood.bx_track_interior("office_tall|v=1")
+	hood.bx_track_interior("office_tall|shell")
 	return _entry(spec, roof_g, door)
 
 
 # ------------------------------------------------------------ small offices
 
 func _build_office_small(hood: NeighborhoodBuilder, spec: Dictionary) -> Dictionary:
-	var rng := hood.bx_rng()
+	# SHELL ONLY (interior-zones phase): the compound lives in the hidden
+	# zone; the exterior keeps walls, roof, door, sign, windows, veil.
+	# (Field report: the old in-footprint interior could read as "nothing"
+	# on office seeds — the zone system removes that whole class of
+	# reveal bug: the roof just stays on, the player teleports inside.)
 	var root := _base(hood, spec)
 	var w: float = spec["w"]
 	var d: float = spec["d"]
 	var h: float = spec["h"]
 	var face: float = spec["face"]
 	var fd := face
-	var bd := -face
 	_walls(hood, root, face, w, d, h, 0.3,
 		hood.bx_std(Color(0.68, 0.64, 0.58), 0.9))
 	var roof_g := _flat_roof(hood, root, w, d, h,
@@ -707,31 +615,7 @@ func _build_office_small(hood: NeighborhoodBuilder, spec: Dictionary) -> Diction
 		Vector3(0, 0, fd), 3.6, 0.8, Color(0.20, 0.24, 0.32), Color(0.90, 0.92, 0.95))
 	for wx in [-2.6, 2.6]:
 		hood.bx_window(root, Vector3(wx, 1.8, fz + fd * 0.05), Vector3(0, 0, fd), false)
-	# Cubicle pods: two seeded partition layouts.
-	var preset := rng.randi() % 2
-	var ph := 1.5
-	if preset == 0:
-		hood.bx_furn(hood.bx_solid_box(root, Vector3(3.6, ph, 0.15),
-			Vector3(-1.4, ph * 0.5, bd * 1.2), hood.bx_mat("inner")))
-		hood.bx_furn(hood.bx_solid_box(root, Vector3(0.15, ph, 2.4),
-			Vector3(-1.4, ph * 0.5, bd * 2.2), hood.bx_mat("inner")))
-		hood.bx_furn(hood.bx_solid_box(root, Vector3(3.6, ph, 0.15),
-			Vector3(1.8, ph * 0.5, bd * 2.0), hood.bx_mat("inner")))
-	else:
-		hood.bx_furn(hood.bx_solid_box(root, Vector3(0.15, ph, 3.2),
-			Vector3(0, ph * 0.5, bd * 1.8), hood.bx_mat("inner")))
-		hood.bx_furn(hood.bx_solid_box(root, Vector3(3.0, ph, 0.15),
-			Vector3(-1.6, ph * 0.5, bd * 1.4), hood.bx_mat("inner")))
-		hood.bx_furn(hood.bx_solid_box(root, Vector3(3.0, ph, 0.15),
-			Vector3(1.6, ph * 0.5, bd * 2.4), hood.bx_mat("inner")))
-	_desk(hood, root, Vector3(-2.0, 0, bd * 1.6), rng.randf_range(-0.5, 0.5))
-	_desk(hood, root, Vector3(1.6, 0, bd * 2.4), rng.randf_range(-0.5, 0.5))
-	_desk(hood, root, Vector3(0.2, 0, fd * 1.8), rng.randf_range(-0.5, 0.5))
-	hood.bx_add_loot(root.position + Vector3(-2.0, 0.6, bd * 0.8),
-		[["scrap", 3]])
-	hood.bx_add_loot(root.position + Vector3(1.6, 0.6, bd * 1.6),
-		[["cloth", 2], ["water", 1]])
-	hood.bx_track_interior("office_small|preset=%d" % preset)
+	hood.bx_track_interior("office_small|shell")
 	return _entry(spec, roof_g, door)
 
 
@@ -742,7 +626,6 @@ func _build_warehouse(hood: NeighborhoodBuilder, spec: Dictionary) -> Dictionary
 	# banding eating the base, a shut ribbed rolling door, high barred
 	# windows, pallet + crate stacks inside. Purely additive 5th kind —
 	# appended after the anchors so their seeded draws never shift.
-	var rng := hood.bx_rng()
 	var vrng := hood.bx_vrng()
 	var root := _base(hood, spec)
 	var w: float = spec["w"]
@@ -750,7 +633,6 @@ func _build_warehouse(hood: NeighborhoodBuilder, spec: Dictionary) -> Dictionary
 	var h: float = spec["h"]
 	var face: float = spec["face"]
 	var fd := face
-	var bd := -face
 	_walls(hood, root, face, w, d, h, 0.35,
 		hood.bx_std(Color(0.46, 0.48, 0.43), 0.85))
 	var roof_g := _flat_roof(hood, root, w, d, h,
@@ -805,26 +687,12 @@ func _build_warehouse(hood: NeighborhoodBuilder, spec: Dictionary) -> Dictionary
 	hood.bx_box(roof_g, Vector3(0.7, 0.9, 0.7), Vector3(-3.0, h + 0.6, 1.0),
 		hood.bx_std(Color(0.40, 0.38, 0.35), 0.9))
 	hood.bx_box(roof_g, Vector3(1.2, 0.7, 0.9), Vector3(2.0, h + 0.5, -1.5), rust)
-	# Interior: pallet stacks + crate rows down the middle.
-	var wood: Material = hood.bx_mat("wood")
-	for ci in 4:
-		var cx := -4.5 + float(ci) * 2.6 + rng.randf_range(-0.2, 0.2)
-		var cz := bd * rng.randf_range(1.5, 2.5)
-		hood.bx_furn(hood.bx_solid_box(root, Vector3(1.6, 0.14, 1.2),
-			Vector3(cx, 0.07, cz), wood)) # pallet
-		hood.bx_furn(hood.bx_solid_box(root, Vector3(1.3, 0.9, 1.0),
-			Vector3(cx, 0.6, cz), wood)) # crate
-		if rng.randf() < 0.5:
-			hood.bx_furn(hood.bx_solid_box(root, Vector3(1.0, 0.7, 0.8),
-				Vector3(cx + 0.1, 1.4, cz), wood)) # second crate
-	# Scrap-heavy loot; one worker that never clocked out. A guard's
-	# shotgun leans by the far crates (wave loop: rare working gun).
-	hood.bx_add_loot(root.position + Vector3(-3.0, 0.6, bd * 1.8),
-		[["scrap", 3], ["cloth", 1]], "toolbox")
-	hood.bx_add_loot(root.position + Vector3(3.0, 0.6, bd * 2.2),
-		[["scrap", 2], ["canned_food", 1]])
-	hood.bx_add_loot(root.position + Vector3(-4.5, 0.6, bd * 2.6),
-		[["shotgun", 1], ["shells", 6]])
-	hood.bx_zombie(root.position + Vector3(rng.randf_range(-3.0, 3.0), 0.3, 0.0))
-	hood.bx_track_interior("warehouse|v=1")
+	# SHELL ONLY (interior-zones phase): pallets/crates, scrap loot,
+	# shotgun and walker moved to the hidden zone. The lumber piles stay
+	# OUTSIDE the shell: they are the wood economy's reliable source.
+	hood.bx_add_loot(root.position + Vector3(-3.2, 0.3, fd * (d * 0.5 + 2.2)),
+		[["wood", 4]], "lumber")
+	hood.bx_add_loot(root.position + Vector3(3.2, 0.3, fd * (d * 0.5 + 2.2)),
+		[["wood", 3]], "lumber")
+	hood.bx_track_interior("warehouse|shell")
 	return _entry(spec, roof_g, door)

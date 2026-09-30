@@ -95,7 +95,11 @@ const PROMPTS := {
 	"toolbox": "SEARCH TOOLBOX",
 	"firstaid": "SEARCH FIRST AID",
 	"duffel": "SEARCH DUFFEL",
+	"drop": "TAKE",
+	"lumber": "TAKE LUMBER",
 }
+
+var container_id := -1 # build-order index; wave-scarcity rolls key off this
 
 
 static func prompt_for(k: String) -> String:
@@ -119,6 +123,10 @@ func build(loot_items: Array, p_kind := "crate") -> void:
 			_build_firstaid()
 		"duffel":
 			_build_duffel()
+		"drop":
+			_build_drop()
+		"lumber":
+			_build_lumber()
 		_:
 			_build_crate()
 	_add_glow()
@@ -266,6 +274,22 @@ func _build_duffel() -> void:
 	_box(Vector3(0.06, 0.12, 0.10), Vector3(0.14, 0.57, 0), _m_duffel_dark)
 
 
+func _build_drop() -> void:
+	# Zombie drop: a small dark satchel on the ground where the kill
+	# happened. Low profile, no collision, glow ring marks it.
+	_box(Vector3(0.44, 0.16, 0.30), Vector3(0, 0.08, 0), _m_trash_dark, 0.35)
+	_box(Vector3(0.20, 0.10, 0.22), Vector3(0.05, 0.20, -0.02), _m_duffel, -0.2)
+
+
+func _build_lumber() -> void:
+	# Lumber pile: stacked planks with two cross pieces, by the warehouse.
+	_box(Vector3(1.7, 0.13, 0.34), Vector3(0, 0.10, 0), _m_wood, 0.06)
+	_box(Vector3(1.6, 0.13, 0.34), Vector3(0.05, 0.24, 0.02), _m_wood_dark, -0.05)
+	_box(Vector3(1.75, 0.13, 0.34), Vector3(-0.03, 0.38, -0.02), _m_wood, 0.10)
+	_box(Vector3(0.30, 0.10, 1.1), Vector3(-0.5, 0.05, 0), _m_wood_dark)
+	_box(Vector3(0.30, 0.10, 1.1), Vector3(0.55, 0.05, 0), _m_wood_dark)
+
+
 func _add_glow() -> void:
 	# Subtle glow ring while unsearched. Corpses get a wider ring so it
 	# encircles the blood pool instead of hiding under it.
@@ -286,8 +310,9 @@ func _add_glow() -> void:
 
 
 func _add_collision() -> void:
-	# Solid so the player can't walk through it (corpses are low: no block).
-	if kind == "corpse" or kind == "fresh_corpse":
+	# Solid so the player can't walk through it (corpses and ground drops
+	# are low: no block).
+	if kind == "corpse" or kind == "fresh_corpse" or kind == "drop":
 		return
 	var sb := StaticBody3D.new()
 	var cs := CollisionShape3D.new()

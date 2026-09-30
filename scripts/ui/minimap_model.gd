@@ -21,6 +21,19 @@ var _hood: NeighborhoodBuilder
 var _zombies: ZombieManager
 var _loot: LootManager
 var _safehouse: Safehouse
+var _zones: InteriorZones = null # hidden zones: map coords back to buildings
+
+
+func set_zones(z: InteriorZones) -> void:
+	_zones = z
+
+
+## Map a world position back to the exterior map when it sits inside a
+## hidden interior zone (houses/buildings are drawn from the exterior).
+func _map(pos: Vector3) -> Vector3:
+	if _zones == null:
+		return pos
+	return _zones.map_to_exterior(pos)
 
 var _fog := PackedByteArray()
 var _tick_t := 0.0
@@ -86,7 +99,7 @@ func _process(delta: float) -> void:
 	_tick_t = 0.0
 	if not is_instance_valid(_player):
 		return
-	var pp := _player.global_position
+	var pp := _map(_player.global_position)
 	_reveal(pp.x, pp.z, REVEAL_RADIUS)
 	_rebuild_marks(pp)
 	updated.emit()
@@ -95,13 +108,13 @@ func _process(delta: float) -> void:
 func _rebuild_marks(pp: Vector3) -> void:
 	_zdots.clear()
 	for z in _zombies.living_zombies():
-		var zp := (z as Node3D).global_position
+		var zp := _map((z as Node3D).global_position)
 		if Vector2(zp.x - pp.x, zp.z - pp.z).length() <= ZOMBIE_RANGE:
 			_zdots.append(Vector2(zp.x, zp.z))
 	_cun.clear()
 	_csearched.clear()
 	for c in _loot.get_containers():
-		var cp := (c as Node3D).global_position
+		var cp := _map((c as Node3D).global_position)
 		if (c as LootContainer).searched:
 			_csearched.append(Vector2(cp.x, cp.z))
 		else:
@@ -111,7 +124,7 @@ func _rebuild_marks(pp: Vector3) -> void:
 # --- Read access for MapDraw (all map-space: x = world x, y = world z) ---
 
 func player_pos() -> Vector2:
-	var pp := _player.global_position
+	var pp := _map(_player.global_position)
 	return Vector2(pp.x, pp.z)
 
 

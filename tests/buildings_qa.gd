@@ -9,11 +9,16 @@ var _booted := false
 var _frames := 0
 var _ok := true
 var _main: Node
+# Lazy load: NeighborhoodBuilder touches the Sound autoload (via
+# ChoppableTree); static class_name refs compile before autoloads register
+# in bare --script mode. (prompt_qa.gd precedent.)
+var _NB: GDScript
 
 
 func _process(_delta: float) -> bool:
 	if not _booted:
 		_booted = true
+		_NB = load("res://scripts/world/neighborhood_builder.gd")
 		_builder_checks()
 		root.get_node("RunState").set("world_seed", 48392017)
 		var ps := load("res://scenes/main.tscn") as PackedScene
@@ -32,17 +37,17 @@ func _process(_delta: float) -> bool:
 
 func _builder_checks() -> void:
 	# Determinism without booting the scene.
-	var n1 := NeighborhoodBuilder.new()
+	var n1: Node = _NB.new()
 	root.add_child(n1)
 	n1.build_world(48392017)
-	var n2 := NeighborhoodBuilder.new()
+	var n2: Node = _NB.new()
 	root.add_child(n2)
 	n2.build_world(48392017)
 	_ok = _check("layout_determinism", n1.layout_hash() == n2.layout_hash(), _ok)
 	_ok = _check("interior_determinism",
 		n1.interior_hash() == n2.interior_hash() and n1.interior_hash() != "", _ok)
 	n2.free()
-	var n3 := NeighborhoodBuilder.new()
+	var n3: Node = _NB.new()
 	root.add_child(n3)
 	n3.build_world(777)
 	_ok = _check("interior_varies", n3.interior_hash() != n1.interior_hash(), _ok)

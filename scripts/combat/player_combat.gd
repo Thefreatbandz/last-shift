@@ -27,6 +27,7 @@ const BAT_REST_X := PI + 0.55
 var _player: PlayerController
 var _hud: Hud
 var _zombies: ZombieManager
+var choppables: Array = [] # ChoppableTree nodes: melee chops yield wood
 var _noise: NoiseBus
 var _health: PlayerHealth
 var _survival: SurvivalStats
@@ -404,6 +405,19 @@ func _apply_hit() -> void:
 		Sound.play_3d("thwack", z.global_position)
 		hit_any = true
 		killed_any = killed_any or died
+	# Wood economy: melee swings also chop dead trees in the arc.
+	for t in choppables:
+		var tree := t as ChoppableTree
+		if tree == null or tree.felled_flag:
+			continue
+		var tto := tree.global_position - _player.global_position
+		tto.y = 0.0
+		if tto.length() > float(def["range"]) + 0.8:
+			continue
+		if fwd.dot(tto.normalized()) < cos(deg_to_rad(float(def["arc"]))):
+			continue
+		tree.chop()
+		hit_any = true
 	if hit_any:
 		_do_hit_stop()
 		_camera_rig.add_trauma(0.55 if killed_any else 0.30)

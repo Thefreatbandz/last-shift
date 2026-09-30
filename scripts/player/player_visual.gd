@@ -119,8 +119,8 @@ func set_target_yaw(y: float) -> void:
 
 
 func set_flashlight(on: bool) -> void:
-	_flashlight.light_energy = 2.6 if on else 0.0
-	_m_lens.emission_energy_multiplier = 3.0 if on else 0.0
+	_flashlight.light_energy = 6.0 if on else 0.0
+	_m_lens.emission_energy_multiplier = 5.0 if on else 0.0
 
 
 func tick(delta: float, speed: float, moving: bool) -> void:
@@ -912,8 +912,8 @@ func _build_flashlight() -> void:
 	# Glowing lens at the lamp's front face.
 	_box(lamp_mount, Vector3(0.07, 0.07, 0.02), Vector3(0, 0, -0.085), _m_lens)
 	_flashlight = SpotLight3D.new()
-	_flashlight.spot_range = 15.0
-	_flashlight.spot_angle = 34.0
+	_flashlight.spot_range = 30.0
+	_flashlight.spot_angle = 42.0
 	_flashlight.light_color = Color(1.0, 0.95, 0.85)
 	_flashlight.light_energy = 0.0
 	_flashlight.shadow_enabled = false

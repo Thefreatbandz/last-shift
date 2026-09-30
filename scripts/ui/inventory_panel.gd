@@ -54,11 +54,20 @@ func _ready() -> void:
 	title.add_theme_color_override("font_color", Color(0.95, 0.88, 0.70))
 	vbox.add_child(title)
 
+	var scroll := ScrollContainer.new()
+	scroll.name = "ItemScroll"
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_ALWAYS
+	vbox.add_child(scroll)
+	_style_scrollbar(scroll)
+
 	_grid = GridContainer.new()
+	_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_grid.columns = 3
 	_grid.add_theme_constant_override("h_separation", 10)
 	_grid.add_theme_constant_override("v_separation", 10)
-	vbox.add_child(_grid)
+	scroll.add_child(_grid)
 
 	var close := Button.new()
 	close.text = "CLOSE"
@@ -98,6 +107,25 @@ func close_panel() -> void:
 func _on_changed() -> void:
 	if _open:
 		_refresh()
+
+
+## Slim, always-visible scrollbar to match the panel. Touch-drag scrolls on
+## phones and the mouse wheel on PC — both handled natively by ScrollContainer.
+## Cards inside still tap normally: a clean tap uses, a drag scrolls.
+func _style_scrollbar(scroll: ScrollContainer) -> void:
+	var bar := scroll.get_v_scroll_bar()
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color(1, 1, 1, 0.06)
+	bg.set_corner_radius_all(4)
+	bar.add_theme_stylebox_override("scroll", bg)
+	var grab := StyleBoxFlat.new()
+	grab.bg_color = Color(0.75, 0.65, 0.40, 0.55)
+	grab.set_corner_radius_all(4)
+	grab.content_margin_left = 3
+	grab.content_margin_right = 3
+	bar.add_theme_stylebox_override("grabber", grab)
+	bar.add_theme_stylebox_override("grabber_highlight", grab)
+	bar.add_theme_stylebox_override("grabber_pressed", grab)
 
 
 func _refresh() -> void:

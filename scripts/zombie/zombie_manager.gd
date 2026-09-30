@@ -18,7 +18,28 @@ var zombies: Array[ZombieAI] = []
 var _player: PlayerController
 var _time_manager: TimeManager
 var _noise: NoiseBus
-var barricades: BarricadeManager # wave loop: zombies pound boarded doors
+var barricades: BarricadeManager: # wave loop: zombies pound boarded doors
+	set(v):
+		barricades = v
+		# The initial pack spawns in setup(), before main.gd assigns this.
+		# Propagate so day-1 zombies can pound too.
+		for z in zombies:
+			if is_instance_valid(z):
+				z.barricades = v
+
+# Loot loop: ~1 in 3 kills drops ammo or a crafting part at the corpse.
+# Set via set_drop_context after the LootManager exists (it is built after
+# zombies in the bootstrap). Own RNG stream, seeded from the world seed.
+var loot: LootManager
+var _drng := RandomNumberGenerator.new()
+var _drops_on := false
+const DROP_CHANCE := 0.34
+
+
+func set_drop_context(lm: LootManager, wseed: int) -> void:
+	loot = lm
+	_drng.seed = wseed * 131 + 17
+	_drops_on = true
 
 # Phase 3: workbench "Board Barricade" — zombies get gently pushed out of
 # this circle, reducing pressure near the claimed safehouse.
@@ -57,8 +78,35 @@ func _spawn_at(pos: Vector3) -> ZombieAI:
 	z.global_position = pos
 	z.barricades = barricades
 	z.setup(_player, _time_manager)
+	z.died.connect(_on_zombie_died.bind(z))
 	zombies.append(z)
 	return z
+
+
+func _on_zombie_died(z: ZombieAI) -> void:
+	if not _drops_on or loot == null:
+		return
+	var item := _roll_drop()
+	if item.is_empty():
+		return
+	loot.add_container(z.global_position, [item], "drop")
+
+
+## One drop roll: [] ~66% of the time, else [id, n]. Own RNG stream.
+func _roll_drop() -> Array:
+	if _drng.randf() >= DROP_CHANCE:
+		return []
+	var r := _drng.randf()
+	var item: Array
+	if r < 0.30:
+		item = ["ammo_9mm", _drng.randi_range(3, 6)]
+	elif r < 0.50:
+		item = ["shells", _drng.randi_range(2, 4)]
+	elif r < 0.75:
+		item = ["scrap", _drng.randi_range(1, 2)]
+	else:
+		item = ["cloth", _drng.randi_range(1, 2)]
+	return [item]
 
 
 func _spawn_pack() -> void:

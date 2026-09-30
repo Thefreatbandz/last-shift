@@ -27,6 +27,7 @@ var _step_alt := false
 
 
 func _ready() -> void:
+	add_to_group("player")
 	floor_snap_length = 0.3
 
 
