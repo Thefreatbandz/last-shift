@@ -7,6 +7,8 @@ extends Node
 const MAX_HP := 100.0
 const RESPAWN_POS := Vector3(-6, 0.3, -13) # safehouse doorstep
 
+signal damaged # wave loop: timed healing is interrupted by damage
+
 var hp := MAX_HP
 
 var _dead := false
@@ -14,6 +16,7 @@ var _player: PlayerController
 var _hud: Hud
 var _zombies: ZombieManager
 var _respawn_pos := RESPAWN_POS # Phase 3: claiming the safehouse moves this
+var _last_from := Vector3.ZERO # where the killing blow came from
 
 
 func setup(player: PlayerController, hud: Hud, zombies: ZombieManager) -> void:
@@ -52,13 +55,15 @@ func drain(amount: float) -> void:
 		Sound.set_heartbeat(hp < 30.0 and hp > 0.0)
 
 
-func damage(amount: float) -> void:
+func damage(amount: float, from_pos: Vector3 = Vector3.ZERO) -> void:
 	if _dead:
 		return
+	_last_from = from_pos
 	hp = maxf(0.0, hp - amount)
 	_hud.set_health(hp, MAX_HP)
 	_hud.flash_damage()
 	(_player.get_node("Visual") as PlayerVisual).play_hurt_flinch()
+	damaged.emit()
 	if hp <= 0.0:
 		_die()
 	else:
@@ -71,6 +76,18 @@ func _die() -> void:
 	Sound.play("death")
 	Sound.set_heartbeat(false)
 	_hud.show_death()
+	# Ragdoll: hurl the body away from whatever killed us. Same 6-active
+	# cap as the zombies; if it's full the death overlay still reads fine.
+	var visual := _player.get_node("Visual") as PlayerVisual
+	var dir := _player.global_position - _last_from
+	dir.y = 0.0
+	if dir.length() < 0.05:
+		dir = -_player.global_transform.basis.z
+		dir.y = 0.0
+	var rag := ProcRagdoll.spawn(_player, visual.ragdoll_parts(),
+		dir.normalized(), 7.0)
+	if rag != null:
+		visual.attach_ragdoll(rag)
 
 
 func respawn() -> void:

@@ -18,6 +18,7 @@ var zombies: Array[ZombieAI] = []
 var _player: PlayerController
 var _time_manager: TimeManager
 var _noise: NoiseBus
+var barricades: BarricadeManager # wave loop: zombies pound boarded doors
 
 # Phase 3: workbench "Board Barricade" — zombies get gently pushed out of
 # this circle, reducing pressure near the claimed safehouse.
@@ -54,6 +55,7 @@ func _spawn_at(pos: Vector3) -> ZombieAI:
 	var z := ZOMBIE_SCENE.instantiate() as ZombieAI
 	add_child(z)
 	z.global_position = pos
+	z.barricades = barricades
 	z.setup(_player, _time_manager)
 	zombies.append(z)
 	return z
@@ -84,7 +86,7 @@ func reset_all() -> void:
 func living_zombies() -> Array[ZombieAI]:
 	var out: Array[ZombieAI] = []
 	for z in zombies:
-		if is_instance_valid(z) and not z.is_queued_for_deletion():
+		if is_instance_valid(z) and not z.is_queued_for_deletion() and not z.is_dead():
 			out.append(z)
 	return out
 

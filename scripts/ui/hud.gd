@@ -13,6 +13,7 @@ signal backpack_pressed # touch backpack button
 signal menu_pressed # top-right MENU button (pause)
 signal new_game_pressed # menu: start a fresh seeded neighborhood
 signal continue_pressed # menu: resume the current run
+signal weapon_pressed # touch weapon-swap button
 
 var move_vector := Vector2.ZERO
 var touch_mode := false
@@ -70,6 +71,14 @@ var _menu_new: Button
 var _menu_continue: Button
 var _hud_menu_btn: Button
 var _menu_open := false
+
+# Wave-survival loop: wave status under the clock, big event banners,
+# weapon display + touch weapon-swap button, transient messages.
+var _wave_label: Label
+var _weapon_label: Label
+var _weapon_btn: Button
+var _msg_t := 0.0
+var _interact_prompt_active := false
 
 
 func _make_meter_bar(root: Control, top: int, color: Color) -> ColorRect:
@@ -169,6 +178,23 @@ func _ready() -> void:
 	_clock_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(_clock_label)
 	set_clock(1, 9, 0)
+
+	# --- Wave status: slim label under the clock panel ---
+	_wave_label = Label.new()
+	_wave_label.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	_wave_label.offset_left = -160
+	_wave_label.offset_right = 160
+	_wave_label.offset_top = 70
+	_wave_label.offset_bottom = 94
+	_wave_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_wave_label.add_theme_font_size_override("font_size", 14)
+	_wave_label.add_theme_color_override("font_color", Color(1.0, 0.72, 0.45))
+	_wave_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
+	_wave_label.add_theme_constant_override("shadow_offset_x", 1)
+	_wave_label.add_theme_constant_override("shadow_offset_y", 1)
+	_wave_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_wave_label.text = "FORTIFY — NIGHTFALL COMES"
+	root.add_child(_wave_label)
 
 	# --- Desktop controls hint (hidden once touch mode engages) ---
 	_hint_label = Label.new()
@@ -320,6 +346,50 @@ func _ready() -> void:
 	_use_btn.visible = false
 	_use_btn.button_down.connect(func() -> void: interact_pressed.emit())
 	root.add_child(_use_btn)
+
+	# --- Wave loop: weapon display + touch weapon-swap (left of USE) ---
+	_weapon_label = Label.new()
+	_weapon_label.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	_weapon_label.offset_left = -340
+	_weapon_label.offset_right = -200
+	_weapon_label.offset_top = -216
+	_weapon_label.offset_bottom = -192
+	_weapon_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_weapon_label.add_theme_font_size_override("font_size", 15)
+	_weapon_label.add_theme_color_override("font_color", Color(1.0, 0.92, 0.75))
+	_weapon_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
+	_weapon_label.add_theme_constant_override("shadow_offset_x", 1)
+	_weapon_label.add_theme_constant_override("shadow_offset_y", 1)
+	_weapon_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_weapon_label.text = "NAIL BAT"
+	_weapon_label.visible = false
+	root.add_child(_weapon_label)
+
+	_weapon_btn = Button.new()
+	_weapon_btn.text = "SWAP"
+	_weapon_btn.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	_weapon_btn.offset_left = -340
+	_weapon_btn.offset_top = -300
+	_weapon_btn.offset_right = -200
+	_weapon_btn.offset_bottom = -220
+	_weapon_btn.focus_mode = Control.FOCUS_NONE
+	_weapon_btn.add_theme_font_size_override("font_size", 18)
+	var wb := StyleBoxFlat.new()
+	wb.bg_color = Color(0.25, 0.28, 0.35, 0.55)
+	wb.set_corner_radius_all(40)
+	wb.border_width_left = 3
+	wb.border_width_right = 3
+	wb.border_width_top = 3
+	wb.border_width_bottom = 3
+	wb.border_color = Color(0.70, 0.75, 0.85, 0.70)
+	_weapon_btn.add_theme_stylebox_override("normal", wb)
+	var wb2 := wb.duplicate() as StyleBoxFlat
+	wb2.bg_color = Color(0.40, 0.44, 0.55, 0.75)
+	_weapon_btn.add_theme_stylebox_override("pressed", wb2)
+	_weapon_btn.add_theme_stylebox_override("hover", wb)
+	_weapon_btn.visible = false
+	_weapon_btn.button_down.connect(func() -> void: weapon_pressed.emit())
+	root.add_child(_weapon_btn)
 
 	# --- Phase 3: touch backpack button (top-right) ---
 	_pack_btn = Button.new()
@@ -601,6 +671,8 @@ func _input(event: InputEvent) -> void:
 		_joy.visible = true
 		_attack_btn.visible = true
 		_pack_btn.visible = true
+		_weapon_btn.visible = true
+		_weapon_label.visible = true
 		_touch_hint.visible = true
 		_touch_hint_t = 6.0
 		_hint_label.visible = false
@@ -646,11 +718,17 @@ func _process(delta: float) -> void:
 		if _toast_t <= 0.0:
 			_toast.visible = false
 			_toast_sub.visible = false
+	if _msg_t > 0.0:
+		_msg_t -= delta
+		if _msg_t <= 0.0 and not _interact_prompt_active:
+			_prompt_label.visible = false
+			_refresh_prompt_visibility()
 
 
 # --- Phase 3: interact prompt + USE button ---
 
 func show_interact_prompt(label: String) -> void:
+	_interact_prompt_active = true
 	if touch_mode:
 		_prompt_label.text = label
 	else:
@@ -661,6 +739,17 @@ func show_interact_prompt(label: String) -> void:
 
 func hide_interact_prompt() -> void:
 	_prompt_label.visible = false
+	_interact_prompt_active = false
+	_refresh_prompt_visibility()
+
+
+## Transient center message ("NO AMMO", "BARRICADE BROKEN!"). Shares the
+## prompt label but never fights a real interact prompt: on expiry the
+## label hides only when no interact prompt is active.
+func show_interact(text: String, duration := 1.5) -> void:
+	_prompt_label.text = text
+	_prompt_label.visible = true
+	_msg_t = duration
 	_refresh_prompt_visibility()
 
 
@@ -698,6 +787,29 @@ func show_slept_teaser() -> void:
 	_toast.visible = true
 	_toast_sub.visible = true
 	_toast_t = 3.2
+
+
+## Wave loop: big center banner for NIGHT FALLS / WAVE SURVIVED events.
+func show_banner(main_text: String, sub_text: String, duration := 4.0) -> void:
+	_toast.text = main_text
+	_toast_sub.text = sub_text
+	_toast.visible = true
+	_toast_sub.visible = true
+	_toast_t = duration
+
+
+## Wave loop: slim status under the clock. n=0 means daytime fortify phase.
+func set_wave(n: int, remaining: int) -> void:
+	if n <= 0:
+		_wave_label.text = "FORTIFY — NIGHTFALL COMES"
+	else:
+		_wave_label.text = "WAVE %d — %d LEFT" % [n, remaining]
+
+
+## Weapon display: name + ammo for guns. Desktop sees the label too.
+func set_weapon(display: String) -> void:
+	_weapon_label.text = display
+	_weapon_label.visible = true
 
 
 func queue_attack() -> void:

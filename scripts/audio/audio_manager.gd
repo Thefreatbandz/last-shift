@@ -19,6 +19,7 @@ const NAMES: Array[String] = [
 	"groan1", "groan2", "groan3", "groan4", "snarl", "shuffle1", "shuffle2",
 	"step1", "step2", "pickup", "search", "eat", "craft", "door", "claim",
 	"click", "inv_open", "inv_close", "craft_ok", "death",
+	"gunshot", "shotgun", "reload", "pound", "barricade_break", "heal",
 	"amb_day", "amb_night", "heartbeat",
 ]
 
@@ -33,6 +34,8 @@ const TRIM := {
 	"eat": -7.0, "craft": -5.0, "door": -6.0, "claim": -7.0,
 	"click": -8.0, "inv_open": -8.0, "inv_close": -8.0,
 	"craft_ok": -6.0, "death": -6.0,
+	"gunshot": -5.0, "shotgun": -4.0, "reload": -7.0, "pound": -7.0,
+	"barricade_break": -5.0, "heal": -7.0,
 }
 
 var _s := {}

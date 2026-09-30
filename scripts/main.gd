@@ -32,6 +32,10 @@ const INDOOR_LOOT := [
 	[["scrap", 3]],
 	[["cloth", 2], ["water", 1]],
 	[["canned_food", 1], ["scrap", 1]],
+	# Wave loop: barricade wood + field medicine in houses.
+	[["wood", 3], ["scrap", 1]],
+	[["bandage", 1], ["painkillers", 1], ["canned_food", 1]],
+	[["wood", 2], ["cloth", 1], ["water", 1]],
 ]
 
 
@@ -114,6 +118,7 @@ func _start_run(seed: int) -> void:
 	zombies.setup(player, time_manager, noise, neighborhood.zombie_spawns,
 		neighborhood.brute_spawns, neighborhood.building_zombie_spawns)
 	health.setup(player, hud, zombies)
+	player.health = health # the dead don't walk; the corpse is a ragdoll
 
 	# Survival meters: stamina, hunger, thirst.
 	var survival := SurvivalStats.new()
@@ -160,6 +165,41 @@ func _start_run(seed: int) -> void:
 	add_child(doors)
 	doors.setup(neighborhood, interact, player, safehouse, inventory)
 
+	# Wave loop: barricades -> weapons/guns -> waves. Order matters:
+	# barricades need doors + interact; zombies need barricades for
+	# pounding; combat needs weapons + ranged; waves need it all.
+	var barricades := BarricadeManager.new()
+	barricades.name = "Barricades"
+	add_child(barricades)
+	barricades.setup(neighborhood, doors, interact, inventory, survival,
+		hud, player, safehouse)
+	doors.barricades = barricades
+	zombies.barricades = barricades
+
+	inventory.hud = hud
+	inventory.visual = visual
+	inventory.wire_health()
+
+	var weapons := WeaponManager.new()
+	weapons.name = "Weapons"
+	add_child(weapons)
+	weapons.setup(inventory, hud)
+
+	var ranged := RangedCombat.new()
+	ranged.name = "Ranged"
+	add_child(ranged)
+	ranged.setup(player, hud, zombies, noise, inventory, survival, weapons)
+
+	combat.weapons = weapons
+	combat.ranged = ranged
+	combat.wire_weapons()
+
+	var waves := WaveManager.new()
+	waves.name = "Waves"
+	add_child(waves)
+	waves.setup(time_manager, neighborhood, player, zombies, hud)
+	safehouse.waves = waves
+
 	# QA pass: one searchable container inside every house. The police
 	# station key hides in one non-safehouse house (seeded pick).
 	var key_idx := (seed * 7 + 3) % maxi(neighborhood.houses.size(), 1)
@@ -168,14 +208,37 @@ func _start_run(seed: int) -> void:
 	for i in neighborhood.houses.size():
 		var h := neighborhood.houses[i] as Dictionary
 		var hp := h["pos"] as Vector3
-		var spot := hp + Vector3(-float(h["w"]) * 0.5 + 1.0, 0,
-			float(h["face"]) * (float(h["d"]) * 0.5 - 1.2))
+		var hw := float(h["w"])
+		var hd := float(h["d"])
+		var hface := float(h["face"])
+		var spot := hp + Vector3(-hw * 0.5 + 1.0, 0,
+			hface * (hd * 0.5 - 1.2))
 		var table: Array = INDOOR_LOOT[2] if i == neighborhood.safehouse_index \
 			else INDOOR_LOOT[i % INDOOR_LOOT.size()]
 		if i == key_idx:
 			table = table.duplicate(true)
 			table.append(["police_key", 1])
 		loot.add_container(spot, table)
+		# Interior-loot density: searchable spots where people kept things.
+		# Local layout mirrors _build_interior (world = pos + local, the
+		# house root is never rotated). Clearances verified for w in
+		# [6.8, 8.6], d in [6.2, 7.6] against counter/bed/couch/shelf
+		# solids, the door swing, and (safehouse) the workbench/stash.
+		var is_sh := i == neighborhood.safehouse_index
+		if not is_sh:
+			# Duffel of clothes at the foot of the bed. Skipped in the
+			# safehouse: the bedroll lives in that corner.
+			var bedx := -(hw * 0.5 - 1.35)
+			var bedz := -hface * (hd * 0.5 - 1.75)
+			loot.add_container(hp + Vector3(bedx + 0.55, 0, bedz + hface * 1.15),
+				[["cloth", 2], ["bandage", 1]], "duffel")
+		# Junk in the back corner between the bed and the couch.
+		var ck := "crate" if i % 3 != 2 else "trash"
+		var ctable: Array = [["scrap", 2], ["cloth", 1]] if ck == "crate" \
+			else [["scrap", 1], ["cloth", 1]]
+		loot.add_container(
+			hp + Vector3(-0.5, 0, -hface * (hd * 0.5) + hface * 0.9),
+			ctable, ck)
 
 	# Building types: seeded interior loot containers per building.
 	for bl in neighborhood.building_loot:
@@ -306,8 +369,11 @@ func _do_new_game_reload() -> void:
 
 func _on_respawn(health: PlayerHealth, combat: PlayerCombat, survival: SurvivalStats) -> void:
 	Sound.play("click") # the death-screen tap
+	var visual := player.get_node("Visual") as PlayerVisual
+	visual.rebuild() # discard the ragdoll, rebuild the procedural body
 	health.respawn()
 	survival.on_respawn()
+	combat.refresh_weapon_visual() # re-attach the weapon to the new arm
 	combat.suppress_attack(0.5) # the respawn tap must not trigger a swing
 
 

@@ -16,6 +16,8 @@ static func configure() -> void:
 	_bind("inventory", [KEY_TAB, KEY_I]) # Phase 3: backpack panel
 	_bind("map", [KEY_M]) # minimap: tap the corner widget or M for full map
 	_bind("menu", [KEY_ESCAPE]) # title/pause menu: Esc on desktop, MENU button on touch
+	_bind("reload", [KEY_R]) # wave loop: reload the equipped gun
+	_bind("weapon_swap", [KEY_X]) # wave loop: cycle melee/guns
 	# Left mouse click also attacks (desktop). Re-applied cleanly so
 	# repeated configure() calls never stack duplicate events.
 	InputMap.action_erase_events("attack")

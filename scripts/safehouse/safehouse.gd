@@ -31,6 +31,7 @@ var _stash_panel: StashPanel
 var _claim_id := -1
 var _sleeping := false
 var survival: SurvivalStats # set by main; sleep costs hunger/thirst
+var waves: WaveManager # set by main; you cannot sleep through a wave
 var _props: Node3D # porch props (Safehouse-local; +Z is the porch side)
 var _inprops: Node3D # interior props, parented to the safehouse's house root
 var _bench: Node3D
@@ -258,6 +259,11 @@ func open_stash() -> void:
 
 func sleep() -> void:
 	if _sleeping or _health.is_dead():
+		return
+	if waves != null and waves.wave_active():
+		# No sleeping through the wave: clear UX, denied blip.
+		_hud.show_interact("CAN'T SLEEP — THE DEAD ARE COMING", 2.2)
+		Sound.play("click", -4.0, 0.6)
 		return
 	_sleeping = true
 	_hud.fade_to_black(true)

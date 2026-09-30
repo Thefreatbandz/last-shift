@@ -20,6 +20,12 @@ const CONE_NIGHT := 90.0
 const ATTACK_RANGE := 1.7
 const ATTACK_DAMAGE := 12.0
 const ATTACK_COOLDOWN := 1.3
+# Barricade pounding: zombies hammer boarded/closed doors with the same
+# arms-only swipe (visual.play_lunge), body planted. Boards first, then
+# the door bursts open (BarricadeManager owns HP/stages).
+const POUND_DAMAGE := 8.0
+const POUND_RANGE := 2.4
+const POUND_COOLDOWN := 1.3
 const LOSE_TIME := 4.0
 const HEAR_MULT_NIGHT := 1.4
 const MAX_HP := 100.0
@@ -38,6 +44,7 @@ var dmg_mult := 1.0
 
 var player: PlayerController
 var player_health: PlayerHealth
+var barricades: BarricadeManager # wave loop: pound boarded/closed doors
 var time_manager: TimeManager
 
 var _night_f := 0.0
@@ -51,6 +58,8 @@ var _last_known := Vector3.ZERO
 var _lose_t := 0.0
 var _attack_cd := 0.0
 var _attack_hit_t := -1.0
+var _pound_cd := 0.0
+var _pound_hit_t := -1.0
 var _wall_bias := 1.0
 var _stuck_t := 0.0
 var _stuck_pos := Vector3.ZERO
@@ -67,6 +76,8 @@ var _prev_state: int = State.WANDER
 
 var _to := Vector3.ZERO
 var _dir := Vector3.ZERO
+var _last_launch := 1.0 # ragdoll launch factor of the killing blow
+var _ragdoll: ProcRagdoll = null # live ragdoll, if the active cap allowed one
 
 @onready var visual: ZombieVisual = $Visual
 
@@ -107,6 +118,8 @@ func reset() -> void:
 	_lose_t = 0.0
 	_attack_cd = 0.0
 	_attack_hit_t = -1.0
+	_pound_cd = 0.0
+	_pound_hit_t = -1.0
 	global_position = spawn_pos
 	velocity = Vector3.ZERO
 	rotation = Vector3.ZERO
@@ -125,11 +138,19 @@ func on_noise(pos: Vector3, radius: float) -> void:
 		_look_t = 0.0
 
 
+## Wave loop: wave completion counts dead-but-present corpses as cleared.
+func is_dead() -> bool:
+	return _dead
+
+
 ## Returns true if the blow killed the zombie (for hit feedback sizing).
-func take_damage(amount: float, from_pos: Vector3) -> bool:
+## Returns true if the hit killed the zombie. `launch` scales the death
+## ragdoll (bat ~1.0, shotgun ~2.8); default keeps old callers working.
+func take_damage(amount: float, from_pos: Vector3, launch := 1.0) -> bool:
 	if _dead:
 		return false
 	hp -= amount
+	_last_launch = launch
 	_to = global_position - from_pos
 	_to.y = 0.0
 	if _to.length() > 0.01:
@@ -153,17 +174,36 @@ func _die() -> void:
 	_dead_t = 26.0 # HD pass: corpses persist a while, then sink away
 	Sound.play_3d("zombie_die", global_position)
 	$CollisionShape3D.disabled = true
-	visual.play_death() # fold into a crumple as the body falls
+	# Procedural ragdoll: body parts become live bodies, hurled away from
+	# the killing blow. If the active cap is hit, fall back to the classic
+	# crumple so the death still reads.
+	var dir := _to
+	dir.y = 0.0
+	if dir.length() < 0.05:
+		dir = -global_transform.basis.z
+		dir.y = 0.0
+	_ragdoll = ProcRagdoll.spawn(self, visual.ragdoll_parts(),
+		dir.normalized(), 5.5 * _last_launch)
+	if _ragdoll != null:
+		visual.set_ragdolled()
+	else:
+		visual.play_death() # fold into a crumple as the body falls
 
 
 func _physics_process(delta: float) -> void:
 	if _dead:
 		_dead_t -= delta
-		rotation.x = lerpf(rotation.x, -PI * 0.5, 1.0 - exp(-6.0 * delta))
-		visual.tick_dead(delta)
+		if _ragdoll != null:
+			pass # the physics server owns the corpse now; leave it alone
+		else:
+			rotation.x = lerpf(rotation.x, -PI * 0.5, 1.0 - exp(-6.0 * delta))
+			visual.tick_dead(delta)
 		if _dead_t <= 1.5:
 			# Sink the corpse into the ground over its last 1.5s, then free.
-			position.y = -1.5 * (1.0 - _dead_t / 1.5)
+			if _ragdoll != null:
+				_ragdoll.sink_by(delta * 1.0)
+			else:
+				position.y = -1.5 * (1.0 - _dead_t / 1.5)
 		if _dead_t <= 0.0:
 			queue_free()
 		return
@@ -173,6 +213,7 @@ func _physics_process(delta: float) -> void:
 		_vis_t = 0.15 + randf() * 0.1
 		_visible = _check_vision()
 	_attack_cd = maxf(0.0, _attack_cd - delta)
+	_pound_cd = maxf(0.0, _pound_cd - delta)
 	_vocal_t = maxf(0.0, _vocal_t - delta)
 	_snarl_t = maxf(0.0, _snarl_t - delta)
 	_update_idle_groan(delta)
@@ -374,6 +415,8 @@ func _do_chase(delta: float) -> void:
 	var dist := Vector2(
 		player.global_position.x - global_position.x,
 		player.global_position.z - global_position.z).length()
+	if _pound_door_first():
+		return
 	if dist < ATTACK_RANGE:
 		state = State.ATTACK
 		return
@@ -381,9 +424,46 @@ func _do_chase(delta: float) -> void:
 	_steer(delta, player.global_position, lerpf(CHASE_DAY, CHASE_NIGHT, _night_f) * spd_mult)
 
 
+## Wave loop: a closed door (boarded or not) between the zombie and the
+## player gets pounded instead of attacking through it. Returns true when
+## pounding took over this tick.
+func _pound_door_first() -> bool:
+	if barricades == null:
+		return false
+	var door := barricades.nearest_closed_door(global_position, POUND_RANGE)
+	if door.is_empty():
+		return false
+	_do_pound(door)
+	return true
+
+
+func _do_pound(door: Dictionary) -> void:
+	var delta := get_physics_process_delta_time()
+	var dp := door["pos"] as Vector3
+	_face(dp)
+	# Eased stop while pounding: body planted, arms do the work.
+	var k := 1.0 - exp(-10.0 * delta)
+	velocity.x = lerpf(velocity.x, 0.0, k)
+	velocity.z = lerpf(velocity.z, 0.0, k)
+	if _pound_cd <= 0.0:
+		_pound_cd = POUND_COOLDOWN
+		_pound_hit_t = 0.22
+		visual.play_lunge() # arms-only swipe reads as pounding
+		if _snarl_t <= 0.0:
+			Sound.play_3d("snarl", global_position, 0.0, randf_range(0.94, 1.06))
+			_snarl_t = 3.0
+	if _pound_hit_t > 0.0:
+		_pound_hit_t -= delta
+		if _pound_hit_t <= 0.0 \
+				and global_position.distance_to(dp) < POUND_RANGE + 0.6:
+			barricades.pound(String(door["key"]), POUND_DAMAGE)
+
+
 func _do_attack(delta: float) -> void:
 	if player_health.is_dead():
 		state = State.WANDER
+		return
+	if _pound_door_first():
 		return
 	_face(player.global_position)
 	# Eased stop while attacking: no velocity snap.
@@ -407,7 +487,7 @@ func _do_attack(delta: float) -> void:
 	if _attack_hit_t > 0.0:
 		_attack_hit_t -= delta
 		if _attack_hit_t <= 0.0 and dist < ATTACK_RANGE * 1.25:
-			player_health.damage(ATTACK_DAMAGE * dmg_mult)
+			player_health.damage(ATTACK_DAMAGE * dmg_mult, global_position)
 
 
 func _do_lose(delta: float) -> void:

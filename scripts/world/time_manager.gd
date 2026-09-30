@@ -1,13 +1,17 @@
 class_name TimeManager
 extends Node
 ## Owns the world clock and the day/night environment.
-## A full 24h cycle runs in DAY_LENGTH real seconds. Drives the sun,
-## the procedural sky, fog and ambient light, and tells the neighborhood
-## (street lamps, lit windows) and the player (flashlight) how dark it is.
+## Wave-survival loop: a full 24h cycle runs in DAY_LENGTH real seconds.
+## Daylight is ~3 real minutes — loot, barricade and craft under pressure —
+## then nightfall brings the wave. Drives the sun, the procedural sky, fog
+## and ambient light, and tells the neighborhood (street lamps, lit
+## windows) and the player (flashlight) how dark it is.
 
 signal clock_changed(day: int, hour: int, minute: int)
 
-const DAY_LENGTH := 720.0 # real seconds per 24 game hours
+# Wave loop: 360s per 24h => ~3 min of daylight, ~3 min of night. The WaveManager
+# can end the night early (jump to dawn) when the wave is cleared.
+const DAY_LENGTH := 360.0 # real seconds per 24 game hours
 
 const DAY_TOP := Color(0.16, 0.42, 0.78) # deep teal-blue zenith
 const DAY_HOR := Color(0.84, 0.68, 0.52) # hazy warm apocalypse horizon
@@ -93,6 +97,18 @@ func _process(delta: float) -> void:
 	_emit_clock(false)
 
 
+## Wave loop helpers.
+func is_night() -> bool:
+	var ang := time_hours / 24.0 * TAU - PI * 0.5
+	return sin(ang) <= -0.02
+
+
+func set_time(hours: float) -> void:
+	time_hours = hours
+	_apply()
+	_emit_clock(true)
+
+
 ## Vignette overlay: one full-screen radial-gradient draw, CanvasLayer -1
 ## (above the 3D world, below the HUD). Cinematic frame on phone screens.
 func _build_vignette(root: Node) -> void:
@@ -168,7 +184,7 @@ func _apply() -> void:
 	# V2: the sun rides a FLATTENED arc (elevation * 0.38) so it hangs low
 	# all day — long dramatic shadows, golden-hour mood from morning to
 	# dusk. Day/night timing still uses the true elevation (elev), so the
-	# 12-minute day length is untouched.
+	# short-day wave loop timing is untouched.
 	var ang := time_hours / 24.0 * TAU - PI * 0.5
 	var elev := sin(ang)
 	var sun_dir := Vector3(cos(ang), sin(ang) * 0.38, 0.35).normalized()

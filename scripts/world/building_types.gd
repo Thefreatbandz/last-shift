@@ -437,8 +437,9 @@ func _build_police(hood: NeighborhoodBuilder, spec: Dictionary) -> Dictionary:
 	_sign(hood, root, "ARMORY", Vector3(ax, 2.55, az + fd * 0.4),
 		Vector3(0, 0, fd), 1.7, 0.42, Color(0.12, 0.12, 0.12), Color(0.90, 0.85, 0.60))
 	# Loot: armory (inert Phase-B firearms/ammo) + lobby desk.
+	# Wave loop: the locker now holds a WORKING pistol and live 9mm rounds.
 	hood.bx_add_loot(root.position + Vector3(ax, 0.6, az + fd * 0.9),
-		[["rifle", 1], ["ammo", 2], ["scrap", 2]])
+		[["rifle", 1], ["ammo", 2], ["pistol", 1], ["ammo_9mm", 12], ["scrap", 2]])
 	hood.bx_add_loot(root.position + Vector3(dx, 0.6, dz + fd * 0.9),
 		[["cloth", 2], ["water", 1]])
 	# Brutes: one pacing the cell block, one guarding the armory.
@@ -508,8 +509,8 @@ func _build_hospital(hood: NeighborhoodBuilder, spec: Dictionary) -> Dictionary:
 			Vector3(sx, 1.7, sz + fd * 0.2), crossm)
 		hood.bx_box(root, Vector3(0.16, 0.5, 0.05),
 			Vector3(sx, 1.7, sz + fd * 0.2), crossm)
-		var items := [["medicine", 2], ["bandage", 1]] if csi == 0 \
-			else [["medicine", 1], ["bandage", 2]]
+		var items := [["medicine", 2], ["bandage", 1], ["health_kit", 1]] if csi == 0 \
+			else [["medicine", 1], ["bandage", 2], ["painkillers", 1]]
 		hood.bx_add_loot(root.position + Vector3(sx, 0.6, sz + fd * 0.9), items, "firstaid")
 	hood.bx_add_loot(root.position + Vector3(2.8, 0.6, cz + fd * 0.9),
 		[["cloth", 2], ["scrap", 1]])
@@ -565,6 +566,10 @@ func _build_grocery(hood: NeighborhoodBuilder, spec: Dictionary) -> Dictionary:
 		[["canned_food", 2], ["water", 2]])
 	hood.bx_add_loot(root.position + Vector3(w * 0.25, 0.6, -3.4),
 		[["canned_food", 1], ["water", 1], ["cloth", 1]])
+	# Abandoned restock crate at the aisle end (x=2.8 threads between the
+	# 3-aisle and 4-aisle shelf layouts; clear of the checkout counter).
+	hood.bx_add_loot(root.position + Vector3(2.8, 0.6, -3.2),
+		[["canned_food", 1], ["scrap", 1]], "crate")
 	# One shopper that never left.
 	hood.bx_zombie(root.position + Vector3(
 		rng.randf_range(-4.0, 4.0), 0.3, rng.randf_range(-3.0, 0.0)))
@@ -812,11 +817,14 @@ func _build_warehouse(hood: NeighborhoodBuilder, spec: Dictionary) -> Dictionary
 		if rng.randf() < 0.5:
 			hood.bx_furn(hood.bx_solid_box(root, Vector3(1.0, 0.7, 0.8),
 				Vector3(cx + 0.1, 1.4, cz), wood)) # second crate
-	# Scrap-heavy loot; one worker that never clocked out.
+	# Scrap-heavy loot; one worker that never clocked out. A guard's
+	# shotgun leans by the far crates (wave loop: rare working gun).
 	hood.bx_add_loot(root.position + Vector3(-3.0, 0.6, bd * 1.8),
 		[["scrap", 3], ["cloth", 1]], "toolbox")
 	hood.bx_add_loot(root.position + Vector3(3.0, 0.6, bd * 2.2),
 		[["scrap", 2], ["canned_food", 1]])
+	hood.bx_add_loot(root.position + Vector3(-4.5, 0.6, bd * 2.6),
+		[["shotgun", 1], ["shells", 6]])
 	hood.bx_zombie(root.position + Vector3(rng.randf_range(-3.0, 3.0), 0.3, 0.0))
 	hood.bx_track_interior("warehouse|v=1")
 	return _entry(spec, roof_g, door)

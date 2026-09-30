@@ -13,6 +13,7 @@ extends CharacterBody3D
 var camera_rig: CameraRig
 var hud: Hud
 var survival: SurvivalStats # set by main; gates sprint when exhausted
+var health: PlayerHealth # set by main; the dead don't walk
 
 # Read by SurvivalStats: actual sprint state and whether moving.
 var sprint_active := false
@@ -30,6 +31,17 @@ func _ready() -> void:
 
 
 func _physics_process(delta: float) -> void:
+	if health != null and health.is_dead():
+		# The dead don't walk: decay to still, keep gravity, keep the
+		# ragdoll as the only thing moving.
+		var k0 := 1.0 - exp(-10.0 * delta)
+		velocity.x = lerpf(velocity.x, 0.0, k0)
+		velocity.z = lerpf(velocity.z, 0.0, k0)
+		velocity.y -= gravity * delta
+		if is_on_floor() and velocity.y < 0.0:
+			velocity.y = -0.5
+		move_and_slide()
+		return
 	var iv := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
 	var sprinting := Input.is_action_pressed("sprint")
 	if hud != null and hud.touch_mode:

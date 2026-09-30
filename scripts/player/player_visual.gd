@@ -124,6 +124,8 @@ func set_flashlight(on: bool) -> void:
 
 
 func tick(delta: float, speed: float, moving: bool) -> void:
+	if _ragdolled:
+		return # physics owns the body now
 	rotation.y = lerp_angle(rotation.y, _target_yaw, 1.0 - exp(-10.0 * delta))
 	# Occasional blink, both states.
 	_blink_t += delta
@@ -156,11 +158,24 @@ func play_door_push() -> void:
 
 
 func play_hurt_flinch() -> void:
+	if _ragdolled:
+		return
 	_start_action("hurt", 0.45)
 
 
 func play_attack(duration: float) -> void:
 	_start_action("attack", duration)
+
+
+## Gunshot: right arm snaps up to point the gun forward, small recoil
+## kick on the torso. Envelope 0.22s — cosmetic, the hit is hitscan.
+func play_shoot() -> void:
+	_start_action("shoot", 0.22)
+
+
+## Barricade repair: short both-hands hammering pose.
+func play_repair() -> void:
+	_start_action("repair", 0.8)
 
 
 ## Combat mounts the nail-bat pivot in the right hand so the swing is
@@ -184,7 +199,88 @@ func attach_weapon(pivot: Node3D) -> void:
 	pivot.rotation.z = 0.0
 
 
+## Guns ride on the same pivot: change the rest angle so the barrel points
+## forward-down at rest (bat rest is PI + 0.55, business end down-forward).
+func set_weapon_rest(rx: float) -> void:
+	_weapon_rest_x = rx
+	if _weapon_pivot != null:
+		_weapon_pivot.rotation.x = rx
+
+
+# --- Procedural ragdoll death (ProcRagdoll) -------------------------------
+# Part descriptors for ProcRagdoll.spawn: pivot, collision box (center in
+# pivot space + size), mass. The torso (limb=false) is what everything
+# joints to. The weapon pivot rides along inside the right forearm.
+func ragdoll_parts() -> Array:
+	return [
+		{"pivot": _body, "center": Vector3(0, 1.28, 0),
+			"size": Vector3(0.56, 0.82, 0.36), "mass": 10.0, "limb": false},
+		{"pivot": _head, "center": Vector3.ZERO,
+			"size": Vector3(0.30, 0.32, 0.30), "mass": 2.4, "limb": true},
+		{"pivot": _arm_l, "center": Vector3(0, -0.32, 0),
+			"size": Vector3(0.20, 0.68, 0.20), "mass": 2.8, "limb": true},
+		{"pivot": _arm_r, "center": Vector3(0, -0.32, 0),
+			"size": Vector3(0.20, 0.68, 0.20), "mass": 2.8, "limb": true},
+		{"pivot": _leg_l, "center": Vector3(0, -0.47, 0),
+			"size": Vector3(0.24, 0.98, 0.26), "mass": 5.0, "limb": true},
+		{"pivot": _leg_r, "center": Vector3(0, -0.47, 0),
+			"size": Vector3(0.24, 0.98, 0.26), "mass": 5.0, "limb": true},
+	]
+
+
+var _ragdoll: ProcRagdoll = null
+var _ragdolled := false
+
+
+## Called by PlayerHealth._die: the physics server owns the pivots now —
+## every procedural writer stands down so nothing fights the bodies.
+func set_ragdolled() -> void:
+	_ragdolled = true
+	_mixer.interrupt()
+	_action = ""
+
+
+## Called by PlayerHealth._die after a successful ProcRagdoll.spawn.
+func attach_ragdoll(rag: ProcRagdoll) -> void:
+	_ragdoll = rag
+	set_ragdolled()
+
+
+func clear_ragdoll() -> void:
+	if _ragdoll != null and is_instance_valid(_ragdoll):
+		_ragdoll.queue_free()
+	_ragdoll = null
+	_ragdolled = false
+
+
+## Respawn: discard any ragdoll and rebuild the procedural body in place.
+## Node identity is unchanged, so every external reference
+## (PlayerCombat._visual, RangedCombat muzzle math, main) stays valid.
+## PlayerCombat.refresh_weapon_visual() re-attaches the weapon after this.
+func rebuild() -> void:
+	clear_ragdoll()
+	for c in get_children():
+		remove_child(c)
+		c.queue_free()
+	_phase = 0.0
+	_idle_t = 0.0
+	_blink_t = 0.0
+	_action = ""
+	_action_t = 0.0
+	_mixer.interrupt()
+	_base_prev = {}
+	_ik_prev = {}
+	_head_base_y = 1.72
+	_target_yaw = 0.0
+	_weapon_pivot = null
+	_weapon_rest_x = PI + 0.55 # same as PlayerCombat.BAT_REST_X
+	_flashlight = null
+	_build()
+
+
 func _start_action(name: String, dur: float) -> void:
+	if _ragdolled:
+		return # physics owns the body; no procedural actions
 	# Switching mid-envelope: the interrupted action's in-flight offsets
 	# were captured from what was actually written last frame, so the new
 	# action crossfades over 0.2s instead of popping.
@@ -324,6 +420,23 @@ func _overlay_offsets(action: String, e: float) -> Dictionary:
 			o["head_z"] = 0.30 * e
 			o["arml_z"] = 0.50 * e
 			o["armr_z"] = -0.50 * e
+		"shoot":
+			# Right arm snaps up to horizontal-forward; the pivot batx
+			# levels the barrel. Recoil: slight torso kick back.
+			o["arm_r"] = 1.42 * e
+			o["fore_r"] = 0.10 * e
+			o["batx"] = 0.55 * e
+			o["rx"] = 0.07 * e
+			o["head_x"] = -0.06 * e
+		"repair":
+			# Both hands hammer forward-down twice over the envelope: e
+			# sweeps 0->1->0, so e*2PI sweeps two full pumps.
+			var knock := sin(e * PI * 2.0) * 0.5 + 0.5
+			o["arm_r"] = 0.85 * knock
+			o["arm_l"] = 0.85 * knock
+			o["fore_r"] = 0.35 * knock
+			o["fore_l"] = 0.35 * knock
+			o["rx"] = 0.16 * e
 	return o
 
 

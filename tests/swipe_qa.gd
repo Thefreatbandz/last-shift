@@ -1,10 +1,12 @@
 extends SceneTree
 ## QA for the arms-driven zombie swipe (Tbandz: "the zombie swings and kinda
 ## swung his body"). Drives ZombieVisual.play_lunge() through its 0.38s
-## envelope and asserts:
-##  - both arms move materially (claw swipe),
+## envelope and asserts the attack SHAPE:
+##  - both arms coil UP (wind-up anticipation) then snap DOWN past rest,
 ##  - the torso holds its base hunch (no forward rock, no twist),
-##  - the body doesn't bob, the legs stay planted, the head stays put.
+##  - the body never drifts (no forward/lateral motion; only a small
+##    vertical dip as it drops into the swipe),
+##  - the legs stay planted, the head moves with the strike but recovers.
 ## Run: godot --headless --path . --script res://tests/swipe_qa.gd
 
 var _ran := false
@@ -42,32 +44,43 @@ func _run_case(tag: String, ok: bool) -> bool:
 	var base_arm_r := arm_r.rotation.x
 
 	zv.play_lunge()
-	var d_arm_l := 0.0
-	var d_arm_r := 0.0
+	var min_arm_l := base_arm_l
+	var min_arm_r := base_arm_r
+	var max_arm_l := base_arm_l
+	var max_arm_r := base_arm_r
 	var d_body_rx := 0.0
 	var d_body_rz := 0.0
-	var d_body_py := 0.0
+	var d_body_px := 0.0
+	var d_body_pz := 0.0
+	var max_dip := 0.0
 	var d_leg_l := 0.0
 	var d_leg_r := 0.0
-	var d_head := 0.0
+	var end_head := 0.18
 	# Walk the full 0.38s envelope at 60fps.
 	for _i in 24:
 		zv.tick(1.0 / 60.0, 0.0, false)
-		d_arm_l = maxf(d_arm_l, absf(arm_l.rotation.x - base_arm_l))
-		d_arm_r = maxf(d_arm_r, absf(arm_r.rotation.x - base_arm_r))
+		min_arm_l = minf(min_arm_l, arm_l.rotation.x)
+		min_arm_r = minf(min_arm_r, arm_r.rotation.x)
+		max_arm_l = maxf(max_arm_l, arm_l.rotation.x)
+		max_arm_r = maxf(max_arm_r, arm_r.rotation.x)
 		d_body_rx = maxf(d_body_rx, absf(body.rotation.x - 0.34))
 		d_body_rz = maxf(d_body_rz, absf(body.rotation.z))
-		d_body_py = maxf(d_body_py, absf(body.position.y))
+		d_body_px = maxf(d_body_px, absf(body.position.x))
+		d_body_pz = maxf(d_body_pz, absf(body.position.z))
+		max_dip = maxf(max_dip, absf(body.position.y))
 		d_leg_l = maxf(d_leg_l, absf(leg_l.rotation.x))
 		d_leg_r = maxf(d_leg_r, absf(leg_r.rotation.x))
-		d_head = maxf(d_head, absf(head.rotation.x - 0.18))
+		end_head = head.rotation.x
 	zv.free()
 
-	ok = _check(tag + "_arms_move_l", d_arm_l > 0.5, ok)
-	ok = _check(tag + "_arms_move_r", d_arm_r > 0.5, ok)
+	ok = _check(tag + "_arms_wind_up", min_arm_l < base_arm_l - 0.5 \
+		and min_arm_r < base_arm_r - 0.5, ok)
+	ok = _check(tag + "_arms_strike_down", max_arm_l > base_arm_l + 0.3 \
+		and max_arm_r > base_arm_r + 0.3, ok)
 	ok = _check(tag + "_torso_no_rock", d_body_rx < 0.05, ok)
 	ok = _check(tag + "_torso_no_twist", d_body_rz < 0.05, ok)
-	ok = _check(tag + "_body_no_bob", d_body_py < 0.05, ok)
+	ok = _check(tag + "_body_no_drift", d_body_px < 0.05 and d_body_pz < 0.05, ok)
+	ok = _check(tag + "_body_dip_small", max_dip < 0.12, ok)
 	ok = _check(tag + "_legs_planted", d_leg_l < 0.05 and d_leg_r < 0.05, ok)
-	ok = _check(tag + "_head_steady", d_head < 0.05, ok)
+	ok = _check(tag + "_head_recovers", absf(end_head - 0.18) < 0.1, ok)
 	return ok

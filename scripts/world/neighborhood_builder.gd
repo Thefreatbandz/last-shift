@@ -444,6 +444,8 @@ func _loot_table(kind: String) -> Array:
 				t.append(["cloth", 1])
 			if _lrng.randf() < 0.25:
 				t.append(["canned_food", 1])
+			if _lrng.randf() < 0.25:
+				t.append(["wood", _lrng.randi_range(1, 2)]) # wave loop: barricades
 			return t
 		"corpse":
 			var t: Array = [["cloth", _lrng.randi_range(1, 2)]]
@@ -451,6 +453,8 @@ func _loot_table(kind: String) -> Array:
 				t.append(["scrap", 1])
 			if _lrng.randf() < 0.3:
 				t.append(["bandage", 1])
+			if _lrng.randf() < 0.15:
+				t.append(["painkillers", 1])
 			return t
 		"fresh_corpse":
 			var t: Array = [["bandage", 1]]
@@ -460,24 +464,45 @@ func _loot_table(kind: String) -> Array:
 				t.append(["canned_food", 1])
 			if _lrng.randf() < 0.3:
 				t.append(["water", 1])
+			if _lrng.randf() < 0.20:
+				t.append(["health_kit", 1])
 			return t
 		"toolbox":
 			var t: Array = [["scrap", _lrng.randi_range(2, 3)]]
 			if _lrng.randf() < 0.4:
 				t.append(["cloth", 1])
+			if _lrng.randf() < 0.30:
+				t.append(["wood", 2])
+			if _lrng.randf() < 0.10:
+				t.append(["fire_axe", 1]) # rare: a real tool
 			return t
 		"firstaid":
 			var t: Array = [["bandage", _lrng.randi_range(1, 2)]]
 			if _lrng.randf() < 0.5:
 				t.append(["medkit", 1])
+			if _lrng.randf() < 0.25:
+				t.append(["painkillers", 1])
+			if _lrng.randf() < 0.15:
+				t.append(["health_kit", 1])
 			return t
 		"duffel":
 			var t: Array = [["canned_food", 1], ["water", 1]]
 			if _lrng.randf() < 0.5:
 				t.append(["cloth", 1])
+			if _lrng.randf() < 0.15:
+				t.append(["ammo_9mm", _lrng.randi_range(4, 8)])
+			if _lrng.randf() < 0.08:
+				t.append(["shells", _lrng.randi_range(2, 4)])
+			if _lrng.randf() < 0.06:
+				t.append(["pistol", 1]) # rare street gun
 			return t
 		_: # "crate"
-			return [["scrap", 2], ["cloth", 1]]
+			var t: Array = [["scrap", 2], ["cloth", 1]]
+			if _lrng.randf() < 0.5:
+				t.append(["wood", _lrng.randi_range(2, 3)])
+			if _lrng.randf() < 0.12:
+				t.append(["machete", 1]) # rare: packed blade
+			return t
 
 
 func _layout_safehouse_info() -> void:
@@ -1074,6 +1099,42 @@ func _build_roads() -> void:
 				_m_dash_faded if _vrng.randf() < 0.35 else dm)
 	# Sidewalk expansion joints: thin dark seams every ~6m, one draw call.
 	_build_sidewalk_joints(ez, nx)
+	# Manhole covers, storm drains, faded crosswalks.
+	_build_street_details(ez, nx)
+
+
+## Manhole covers, storm drains and worn crosswalks. (Cosmetic: _vrng only.)
+func _build_street_details(ez: float, nx: float) -> void:
+	var drain_mat := _std(Color(0.10, 0.10, 0.11), 0.7, 0.4)
+	var walk_mat := _std(Color(0.55, 0.55, 0.52), 0.95) # worn crosswalk paint
+	# Manhole covers: dark iron discs wandering down both roads.
+	for _i in 7:
+		_cyl(self, 0.45, 0.45, 0.025,
+			Vector3(_vrng.randf_range(-62.0, 62.0), 0.005, ez + _vrng.randf_range(-2.4, 2.4)),
+			drain_mat)
+	for _i in 7:
+		_cyl(self, 0.45, 0.45, 0.025,
+			Vector3(nx + _vrng.randf_range(-2.4, 2.4), 0.005, _vrng.randf_range(-62.0, 62.0)),
+			drain_mat)
+	# Storm drains: grate boxes tucked against the curbs.
+	for _i in 10:
+		var on_ew := _vrng.randf() < 0.5
+		var side := 1.0 if _vrng.randf() < 0.5 else -1.0
+		if on_ew:
+			var dx := Vector3(_vrng.randf_range(-62.0, 62.0), 0.02, ez + side * 3.7)
+			_box(self, Vector3(0.9, 0.05, 0.5), dx, drain_mat)
+		else:
+			var dz := Vector3(nx + side * 4.7, 0.02, _vrng.randf_range(-62.0, 62.0))
+			_box(self, Vector3(0.5, 0.05, 0.9), dz, drain_mat)
+	# Faded crosswalks: worn white bars across the EW road, clear of the
+	# intersection and the dashes.
+	for cx in [-14.0, 22.0]:
+		for bi in 6:
+			var worn := _vrng.randf() < 0.45
+			if worn:
+				continue
+			_box(self, Vector3(0.55, 0.012, 6.4),
+				Vector3(cx + bi * 1.1 - 2.75, 0.004, ez), walk_mat)
 
 
 ## Sidewalk expansion joints + asphalt cracks + repair patches, all in one
@@ -1388,6 +1449,12 @@ func _house(pos: Vector3, face: float, w: float, d: float, wall: Color, roof_c: 
 	# Concrete step.
 	_box(root, Vector3(2.3, 0.18, 1.2),
 		Vector3(0, 0.07, fz + face * 0.75), _m_step)
+	# Porch light: bracket + warm lamp beside the door (glows at night
+	# with the other warm lights).
+	_box(root, Vector3(0.10, 0.22, 0.10),
+		Vector3(door_w * 0.5 + 0.35, 2.45, fz_out), _m_trim)
+	_box(root, Vector3(0.16, 0.20, 0.16),
+		Vector3(door_w * 0.5 + 0.35, 2.28, fz_out + face * 0.04), _window_lit_mat)
 	# Doorway blocker: solid while the door is closed, disabled when open.
 	var blocker := _solid(root, Vector3(door_w, door_h, 0.24), Vector3(0, door_h * 0.5, fz))
 	# Doorway veil: dark quad just inside the doorway. Visible while the
@@ -1524,6 +1591,44 @@ func _build_interior(root: Node3D, w: float, d: float, face: float) -> void:
 	_furn(_solid_box(root, Vector3(1.7, 0.32, 1.15), Vector3(bedx, 0.22, bedz), _m_bed))
 	_box(root, Vector3(1.6, 0.18, 1.05), Vector3(bedx, 0.47, bedz), _m_bedding)
 	_box(root, Vector3(0.45, 0.12, 0.7), Vector3(bedx - 0.5, 0.60, bedz), _m_cushion)
+	# --- Detail-density pass: baseboards, ceiling light, stocked shelf. ---
+	# Baseboards: trim strips proud of the interior liner on all walls.
+	var bb := 0.065 # offset from liner plane toward room center
+	var _door_w := 1.4
+	var _seg_w := (w - _door_w) * 0.5
+	var _fz := face * (d * 0.5)
+	_box(root, Vector3(w - 0.2, 0.14, 0.05),
+		Vector3(0, 0.10, -face * (d * 0.5 - 0.19) + face * bb), _m_trim)
+	_box(root, Vector3(0.05, 0.14, d - 0.2),
+		Vector3(-(w * 0.5 - 0.19) + bb, 0.10, 0), _m_trim)
+	_box(root, Vector3(0.05, 0.14, d - 0.2),
+		Vector3(w * 0.5 - 0.19 - bb, 0.10, 0), _m_trim)
+	_box(root, Vector3(_seg_w, 0.14, 0.05),
+		Vector3(-(_door_w * 0.5 + _seg_w * 0.5), 0.10, _fz - face * 0.19 + face * bb), _m_trim)
+	_box(root, Vector3(_seg_w, 0.14, 0.05),
+		Vector3(_door_w * 0.5 + _seg_w * 0.5, 0.10, _fz - face * 0.19 + face * bb), _m_trim)
+	# Ceiling light: mount + warm emissive panel at room center.
+	_box(root, Vector3(0.22, 0.08, 0.22), Vector3(0.4, 2.90, 0), _m_trim)
+	_box(root, Vector3(0.44, 0.05, 0.44), Vector3(0.4, 2.84, 0), _window_lit_mat)
+	# Wall shelf with cans on the left wall, above the kitchen counter.
+	var shlf_x := -(w * 0.5 - 0.19) + 0.20
+	var shlf_z := -0.9
+	_furn(_box(root, Vector3(0.36, 0.05, 1.3), Vector3(shlf_x, 1.55, shlf_z), _m_shelf))
+	_furn(_box(root, Vector3(0.36, 0.05, 1.3), Vector3(shlf_x, 1.95, shlf_z), _m_shelf))
+	var can_mats := [_m_canopy_edge, _m_dash_faded, _m_curb, _m_rust]
+	var can_z := shlf_z - 0.5
+	for ci in 5:
+		var cm: StandardMaterial3D = can_mats[_vrng.randi() % can_mats.size()]
+		_cyl(root, 0.055, 0.055, 0.15,
+			Vector3(shlf_x + _vrng.randf_range(-0.06, 0.06), 1.655, can_z), cm)
+		if _vrng.randf() < 0.7:
+			_cyl(root, 0.055, 0.055, 0.15,
+				Vector3(shlf_x + _vrng.randf_range(-0.06, 0.06), 2.055, can_z + 0.18), cm)
+		can_z += 0.25
+	# Second framed picture (seeded spot on the right wall).
+	var pic2_z := _vrng.randf_range(-1.6, 1.2)
+	_box(root, Vector3(0.05, 0.55, 0.42),
+		Vector3(w * 0.5 - 0.24, 1.95, pic2_z), _m_picture)
 
 
 func _window(root: Node3D, center: Vector3, outward: Vector3, shutters: bool,

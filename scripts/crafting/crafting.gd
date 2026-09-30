@@ -1,7 +1,8 @@
 class_name Crafting
 extends Node
 ## Phase 3: workbench recipes. Costs come from the Inventory; effects hook
-## into combat (spiked bat) and the safehouse (barricade). Emits `crafted`.
+## into combat (spiked bat) and medical/ammo supplies (health kit, 9mm,
+## shells). Emits `crafted`.
 
 signal crafted(recipe_id: String)
 
@@ -12,8 +13,14 @@ const RECIPES := [
 		"desc": "Heals 25 HP.", "once": false},
 	{"id": "field_medkit", "name": "Field Medkit", "cost": {"cloth": 2, "scrap": 1},
 		"desc": "Heals 60 HP.", "once": false},
-	{"id": "barricade", "name": "Board Barricade", "cost": {"scrap": 4, "cloth": 2},
-		"desc": "Fortify the safehouse: zombies keep their distance.", "once": true},
+	# Wave loop: the old abstract safehouse barricade is retired — real door
+	# barricades live in the BarricadeManager. Crafting covers ammo/medical.
+	{"id": "health_kit", "name": "Health Kit", "cost": {"cloth": 2, "bandage": 1},
+		"desc": "Slow to apply. Heals 70 HP.", "once": false},
+	{"id": "ammo_9mm", "name": "9mm Rounds", "cost": {"scrap": 2},
+		"desc": "Hand-load 6 pistol rounds.", "once": false},
+	{"id": "shells", "name": "Shotgun Shells", "cost": {"scrap": 2},
+		"desc": "Hand-load 4 shells.", "once": false},
 	{"id": "lockpick", "name": "Lockpick", "cost": {"scrap": 2},
 		"desc": "Opens one locked door. Single use.", "once": false},
 ]
@@ -71,9 +78,12 @@ func craft(id: String) -> bool:
 			inventory.add("bandage", 1)
 		"field_medkit":
 			inventory.add("medkit", 1)
-		"barricade":
-			safehouse.build_barricade()
-			_done[id] = true
+		"health_kit":
+			inventory.add("health_kit", 1)
+		"ammo_9mm":
+			inventory.add("ammo_9mm", 6)
+		"shells":
+			inventory.add("shells", 4)
 		"lockpick":
 			inventory.add("lockpick", 1)
 	Sound.play("craft") # workbench clank; main plays the success chime on `crafted`

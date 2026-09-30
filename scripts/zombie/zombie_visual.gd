@@ -60,11 +60,15 @@ static var _flash_mat: StandardMaterial3D = null
 # procedural rig maps to these names; when GLB/FBX clips are imported
 # later they drop in under these names with no rewiring.
 #   idle        -> _idle_sway (breathing, blinks of variation via twitch)
-#   walk        -> _shamble (dragging asymmetric gait)
+#   walk        -> _shamble (dragging asymmetric gait: weight shift,
+#                    torso twist, scraping foot, out-of-phase arm sway)
 #   run         -> _shamble at chase speed (faster phase, wider swing)
-#   attack      -> _lunge: arms-only claw swipe, body planted (0.38s)
+#   attack      -> _lunge: arms-only claw swipe, body planted (0.38s):
+#                    wind-up coil, violent snap peaking at the 0.22s
+#                    damage instant, soft recover
 #   attack_2    -> (reserved: brute overhead slam variant)
-#   hit_front   -> play_hit_reaction: torso/head rock back, arms flail (0.30s)
+#   hit_front   -> play_hit_reaction: hard stagger — torso rocks back,
+#                    body shoved a step, asymmetric arm flail (0.30s)
 #   hit_back    -> (reserved: directional flinch; currently hit_front)
 #   hit_left    -> (reserved: directional flinch; currently hit_front)
 #   hit_right   -> (reserved: directional flinch; currently hit_front)
@@ -74,7 +78,9 @@ static var _flash_mat: StandardMaterial3D = null
 #   turn_left   -> yaw easing in tick() (lerp_angle toward _target_yaw)
 #   turn_right  -> yaw easing in tick()
 #   fall        -> (reserved)
-#   death       -> tick_dead: crumple fold (AI lays the body flat)
+#   death       -> tick_dead: two-stage crumple — fast waist fold with
+#                    arm sprawl, then a soft settle (0.45s; AI lays the
+#                    body flat underneath)
 #   death_2     -> (reserved: alternate death variant)
 #   death_crawl -> (reserved)
 # -----------------------------------------------------------------------
@@ -164,6 +170,8 @@ func play_lunge() -> void:
 ## Called by ZombieAI.take_damage: quick stagger — torso rocks back, head
 ## snaps, arms flail up — blended as an overlay on top of the shamble.
 func play_hit_reaction(_from_dir: Vector3) -> void:
+	if _ragdolled:
+		return
 	# Unwind any in-flight flinch: its offsets decay out over 0.2s, so
 	# rapid hits can't stack residue or pop.
 	if _flinch_e <= FLINCH_TIME:
@@ -173,6 +181,8 @@ func play_hit_reaction(_from_dir: Vector3) -> void:
 
 ## Brief white/red emissive flash so the connect reads even at distance.
 func flash_hit() -> void:
+	if _ragdolled:
+		return
 	_flash_t = 0.13
 	_set_flash(true)
 
@@ -187,7 +197,45 @@ func play_death() -> void:
 	_dead_t = 0.0
 
 
+# --- Procedural ragdoll death (ProcRagdoll) -------------------------------
+# Part descriptors for ProcRagdoll.spawn: pivot, collision box (center in
+# pivot space + size), mass. The torso (limb=false) is what everything
+# joints to.
+func ragdoll_parts() -> Array:
+	return [
+		{"pivot": _body, "center": Vector3(0, 1.08, 0),
+			"size": Vector3(0.55, 0.78, 0.42), "mass": 9.0, "limb": false},
+		{"pivot": _head, "center": Vector3(0, 0.02, 0),
+			"size": Vector3(0.30, 0.32, 0.30), "mass": 2.2, "limb": true},
+		{"pivot": _arm_l, "center": Vector3(0, -0.30, 0),
+			"size": Vector3(0.20, 0.66, 0.20), "mass": 2.6, "limb": true},
+		{"pivot": _arm_r, "center": Vector3(0, -0.30, 0),
+			"size": Vector3(0.20, 0.66, 0.20), "mass": 2.6, "limb": true},
+		{"pivot": _leg_l, "center": Vector3(0, -0.44, 0),
+			"size": Vector3(0.24, 0.92, 0.26), "mass": 4.6, "limb": true},
+		{"pivot": _leg_r, "center": Vector3(0, -0.44, 0),
+			"size": Vector3(0.24, 0.92, 0.26), "mass": 4.6, "limb": true},
+	]
+
+
+var _ragdolled := false
+
+
+## Called by ZombieAI._die when the ragdoll spawns: the physics server owns
+## the pivots now — every procedural writer must stand down (and any
+## mid-death hit flash is cleared so it can't stick on the corpse).
+func set_ragdolled() -> void:
+	_ragdolled = true
+	_mixer.interrupt()
+	_flinch_e = 99.0
+	_flash_t = 0.0
+	_set_flash(false)
+	_dead_t = -1.0
+
+
 func tick(delta: float, speed: float, moving: bool) -> void:
+	if _ragdolled:
+		return
 	rotation.y = lerp_angle(rotation.y, _target_yaw, 1.0 - exp(-6.0 * delta))
 	var was_lunge := _lunge_t > 0.0
 	if was_lunge:
@@ -200,6 +248,7 @@ func tick(delta: float, speed: float, moving: bool) -> void:
 			# during the lunge, so its legs would otherwise jump).
 			_lunge_from = {
 				"rx": _body.rotation.x, "rz": _body.rotation.z,
+				"ry": _body.rotation.y, "px": _body.position.x,
 				"leg_l": _leg_l.rotation.x, "leg_r": _leg_r.rotation.x,
 				"arm_l": _arm_l.rotation.x, "arm_r": _arm_r.rotation.x,
 				"head_x": _head.rotation.x,
@@ -218,6 +267,8 @@ func tick(delta: float, speed: float, moving: bool) -> void:
 		w = w * w * (3.0 - 2.0 * w) # smootherstep: gentler ends
 		_body.rotation.x = lerpf(_lunge_from["rx"], _body.rotation.x, w)
 		_body.rotation.z = lerpf(_lunge_from["rz"], _body.rotation.z, w)
+		_body.rotation.y = lerpf(_lunge_from["ry"], _body.rotation.y, w)
+		_body.position.x = lerpf(_lunge_from["px"], _body.position.x, w)
 		_leg_l.rotation.x = lerpf(_lunge_from["leg_l"], _leg_l.rotation.x, w)
 		_leg_r.rotation.x = lerpf(_lunge_from["leg_r"], _leg_r.rotation.x, w)
 		_arm_l.rotation.x = lerpf(_lunge_from["arm_l"], _arm_l.rotation.x, w)
@@ -243,25 +294,32 @@ func tick(delta: float, speed: float, moving: bool) -> void:
 ## Death branch: the AI rotates the whole body flat; this folds the limbs
 ## in so it reads as a crumple, not a stiff board falling over.
 func tick_dead(delta: float) -> void:
+	if _ragdolled:
+		return
 	if _dead_t < 0.0:
 		return
 	_apply_twitch(delta, false) # finish any in-flight twitch, start none
 	_dead_t += delta
 	var t := clampf(_dead_t / DEAD_TIME, 0.0, 1.0)
-	var e := 1.0 - pow(1.0 - t, 3.0) # ease-out cubic
-	_body.position.y = -0.34 * e # torso sinks toward the ground
-	_body.rotation.x = 0.34 + 0.55 * e # folds forward at the waist
-	_body.rotation.z = 0.22 * e # slight sideways twist
-	_head.rotation.x = 0.18 + 0.85 * e # chin drops to chest
-	_head.rotation.z = 0.35 * e
-	_arm_l.rotation.x = -0.55 - 0.55 * e
-	_arm_r.rotation.x = -0.75 - 0.45 * e
-	_arm_l.rotation.z = 0.10 + 0.55 * e # arms fold inward
-	_arm_r.rotation.z = -0.14 - 0.55 * e
-	_leg_l.rotation.x = 0.25 * e
-	_leg_r.rotation.x = -0.30 * e
-	_shin_l.rotation.x = -0.55 * e
-	_shin_r.rotation.x = -0.70 * e
+	# Two-stage: a fast crumple (fold at the waist, arms sprawl) then a
+	# soft settle into the ground. Ease-out cubic on the crumple, gentle
+	# ease on the settle.
+	var e1 := 1.0 - pow(1.0 - clampf(t / 0.62, 0.0, 1.0), 3.0) # crumple
+	var e2 := clampf((t - 0.62) / 0.38, 0.0, 1.0) # settle
+	e2 = e2 * e2 * (3.0 - 2.0 * e2)
+	_body.position.y = -0.34 * e1 - 0.06 * e2 # torso sinks, then settles
+	_body.rotation.x = 0.34 + 0.55 * e1 # folds forward at the waist
+	_body.rotation.z = 0.22 * e1 + 0.06 * e2 # slight sideways twist
+	_head.rotation.x = 0.18 + 0.85 * e1 # chin drops to chest
+	_head.rotation.z = 0.35 * e1 + 0.10 * e2 # lolls to one side
+	_arm_l.rotation.x = -0.55 - 0.55 * e1
+	_arm_r.rotation.x = -0.75 - 0.45 * e1
+	_arm_l.rotation.z = 0.10 + 0.55 * e1 + 0.35 * e2 # arms sprawl outward
+	_arm_r.rotation.z = -0.14 - 0.55 * e1 - 0.35 * e2
+	_leg_l.rotation.x = 0.25 * e1
+	_leg_r.rotation.x = -0.30 * e1
+	_shin_l.rotation.x = -0.55 * e1
+	_shin_r.rotation.x = -0.70 * e1
 	# Decay any interrupted flinch residue into the death pose instead of
 	# snapping it away.
 	if _mixer.has_residue():
@@ -305,14 +363,18 @@ func _apply_flinch(delta: float, base: Dictionary) -> void:
 	var t := clampf(_flinch_e / FLINCH_TIME, 0.0, 1.0)
 	_flinch_e += delta
 	var f := sin(t * PI)
+	# Quality pass: a real STAGGER, not a twitch. The torso rocks back
+	# hard, the whole body is shoved backward a step, the head snaps,
+	# and the arms flail up ASYMMETRICALLY (one high, one wide) so it
+	# reads at a glance even mid-shamble.
 	var offsets := {
-		"rx": f * 0.45, # torso rocks BACK, away from the attacker
-		"pz": f * 0.14, # shoved BACKWARD, away from the attacker
-		"head_x": f * 0.55, # head snaps back
-		"arm_l": -f * 0.9, # arms flail
-		"arm_r": -f * 0.9,
-		"arml_z": f * 0.4,
-		"armr_z": -f * 0.4,
+		"rx": f * 0.52, # torso rocks BACK, away from the attacker
+		"pz": f * 0.22, # shoved BACKWARD a real step
+		"head_x": f * 0.62, # head snaps back
+		"arm_l": -f * 1.15, # left arm flails high
+		"arm_r": -f * 0.65, # right arm flails wide
+		"arml_z": f * 0.55,
+		"armr_z": -f * 0.65,
 	}
 	_write_flinch(_mixer.mix(delta, base, offsets))
 
@@ -341,7 +403,9 @@ static func _get_flash_mat() -> StandardMaterial3D:
 
 
 func _shamble(delta: float, speed: float) -> void:
-	# Slow, dragging, asymmetric shamble with arm lag.
+	# Slow, dragging, asymmetric shamble with arm lag — quality pass:
+	# lateral weight shift, torso twist against the hips, one foot
+	# audibly dragging (flat, scraping), arms swinging out of phase.
 	_phase += delta * (2.2 + speed * 1.1)
 	var s := sin(_phase)
 	var s2 := sin(_phase * 0.5 + 1.3) # asymmetry: one leg drags
@@ -350,15 +414,24 @@ func _shamble(delta: float, speed: float) -> void:
 	_leg_r.rotation.x = -s2 * swing * 0.8
 	_shin_l.rotation.x = -maxf(0.0, -s) * 0.5
 	_shin_r.rotation.x = -maxf(0.0, s2) * 0.35 # dragging leg barely bends
-	# Dangling arms: hang forward-down, lag behind the body sway.
+	# Dragging foot scrapes: the right leg stays flatter and lower through
+	# its swing, never lifting like the left.
+	_leg_r.rotation.z = 0.05 + s2 * 0.03
+	# Dangling arms: hang forward-down, lag behind the body sway, swinging
+	# out of phase with each other (left leads, right trails).
 	var lag := sin(_phase - 0.9)
-	_arm_l.rotation.x = -0.55 + lag * 0.12
-	_arm_r.rotation.x = -0.75 + sin(_phase * 0.5 + 0.4) * 0.15
-	_arm_l.rotation.z = 0.10 + s * 0.04
-	_arm_r.rotation.z = -0.14 + s2 * 0.05
-	# Heavy hunch + lateral sway + head loll.
-	_body.rotation.x = 0.34
+	_arm_l.rotation.x = -0.55 + lag * 0.16
+	_arm_r.rotation.x = -0.75 + sin(_phase * 0.5 + 0.4) * 0.20
+	_arm_l.rotation.z = 0.10 + s * 0.06
+	_arm_r.rotation.z = -0.14 + s2 * 0.07
+	# Heavy hunch + lateral WEIGHT SHIFT (hips rock side to side as the
+	# weight transfers) + torso twist against the stride + head loll.
+	# NOTE: keep the COMBINED lateral (body.z + head.z) modest — the head
+	# sits 1.5m up, so large angles read as a detached head in stills.
+	_body.rotation.x = 0.34 + sin(_phase) * 0.02
 	_body.rotation.z = sin(_phase * 0.5) * 0.08
+	_body.rotation.y = sin(_phase * 0.5 + 0.6) * 0.05 # twist vs hips
+	_body.position.x = sin(_phase * 0.5) * 0.04 # weight shift
 	_body.position.y = absf(cos(_phase)) * 0.035
 	_head.position.y = _head_base_y - absf(cos(_phase)) * 0.015
 	_head.rotation.z = sin(_phase * 0.5 + 0.7) * 0.20
@@ -421,23 +494,66 @@ func _apply_twitch(delta: float, can_trigger := true) -> void:
 
 func _lunge(delta: float) -> void:
 	# ARMS-ONLY swipe (Tbandz: "the zombie swings and kinda swung his body").
-	# The body stays planted: no forward pitch, no rock, no leg shift.
-	# Both arms wind up then claw down toward the victim on the same 0.38s
-	# envelope the AI's damage timing was tuned against (hit lands near the
-	# envelope peak). Damage, range, cooldown, AI: untouched.
+	# The body stays planted: no forward pitch, no rock, no leg shift, no
+	# lateral drift. Quality pass: real attack SHAPE — wind-up anticipation
+	# (arms coil up/back, slight crouch) then a violent SNAP down, strike
+	# peaking at t=0.58 of the envelope (0.22s: exactly when the AI lands
+	# damage), then a soft recover. Same 0.38s envelope the AI's damage
+	# timing was tuned against. Damage, range, cooldown, AI: untouched.
 	var t := 1.0 - _lunge_t / 0.38 # 0 -> 1
-	var up := sin(t * PI) # 0 up 1 down 0
+	var rest_l := -0.55
+	var rest_r := -0.75
+	var wound_l := -1.55 # coiled high
+	var wound_r := -1.75
+	var struck_l := 0.35 # raked down past rest
+	var struck_r := 0.25
+	var ax_l := rest_l
+	var ax_r := rest_r
+	var spread := 0.0
+	var dip := 0.0
+	var head_x := 0.18
+	if t < 0.32:
+		# WIND-UP: arms coil up and back, body sinks a breath, head tilts
+		# up — the tell before the swipe.
+		var f := t / 0.32
+		f = 1.0 - pow(1.0 - f, 2.0) # ease-out: quick coil, held threat
+		ax_l = lerpf(rest_l, wound_l, f)
+		ax_r = lerpf(rest_r, wound_r, f)
+		dip = -0.03 * f
+		head_x = 0.18 - 0.14 * f
+	elif t < 0.62:
+		# STRIKE: violent snap down. pow>1 keeps the first instants slow
+		# then whips through — the claws land at peak velocity.
+		var f := (t - 0.32) / 0.30
+		f = pow(f, 2.0)
+		ax_l = lerpf(wound_l, struck_l, f)
+		ax_r = lerpf(wound_r, struck_r, f)
+		spread = f * 0.22 # claws spread on the strike
+		dip = -0.03 + 0.09 * f # body drops INTO the swipe
+		head_x = 0.04 + 0.30 * f # head snaps down with the arms
+	else:
+		# RECOVER: soft ease back to the dangling rest pose.
+		var f := (t - 0.62) / 0.38
+		f = f * f * (3.0 - 2.0 * f) # smootherstep
+		ax_l = lerpf(struck_l, rest_l, f)
+		ax_r = lerpf(struck_r, rest_r, f)
+		spread = 0.22 * (1.0 - f)
+		dip = 0.06 * (1.0 - f)
+		head_x = 0.34 - 0.16 * f
 	_body.rotation.x = 0.34 # base hunch, held — no rock
 	_body.rotation.z = 0.0
-	_body.position.y = 0.0 # no bob while striking
-	_arm_l.rotation.x = -0.55 - up * 1.05 # claws rake down
-	_arm_r.rotation.x = -0.75 - up * 1.05
-	_arm_l.rotation.z = 0.10 + up * 0.18 # claws spread on the strike
-	_arm_r.rotation.z = -0.14 - up * 0.18
-	_head.rotation.x = 0.18 # head held — the arms do the work
+	_body.rotation.y = 0.0
+	_body.position.x = 0.0
+	_body.position.y = dip # vertical only: the feet never move
+	_arm_l.rotation.x = ax_l
+	_arm_r.rotation.x = ax_r
+	_arm_l.rotation.z = 0.10 + spread
+	_arm_r.rotation.z = -0.14 - spread
+	_head.rotation.x = head_x
 	_head.rotation.z = 0.0
 	_leg_l.rotation.x = 0.0 # feet planted
 	_leg_r.rotation.x = 0.0
+	_leg_r.rotation.z = 0.0
 	_shin_l.rotation.x = 0.0
 	_shin_r.rotation.x = 0.0
 	_apply_twitch(delta, false) # finish any in-flight twitch, start none

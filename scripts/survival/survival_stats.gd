@@ -16,8 +16,8 @@ const ATTACK_COST := 8.0 # stamina per bat swing
 const REGEN_WALK := 10.0 # per real second
 const REGEN_IDLE := 18.0
 const SPRINT_MIN := 10.0 # stamina required to START sprinting
-const HUNGER_PER_HOUR := 100.0 / 24.0 # full -> empty over ~2 in-game days
-const THIRST_PER_HOUR := 100.0 / 14.0 # full -> empty over ~14 in-game hours
+const HUNGER_PER_HOUR := 100.0 / 48.0 # wave loop: empty over 2 in-game days (~12 real min)
+const THIRST_PER_HOUR := 100.0 / 36.0 # wave loop: empty over 1.5 in-game days (~9 real min)
 const STARVE_HP_DRAIN := 2.0 # HP per real second at 0 hunger
 const FOOD_RESTORE := 40.0
 const WATER_RESTORE := 50.0
@@ -36,6 +36,8 @@ var _tm: TimeManager
 var _last_hours := -1.0
 var _sprinting := false
 var _growl_t := 8.0
+var _stamina_boost_mult := 1.0
+var _stamina_boost_t := 0.0
 
 
 func setup(player: PlayerController, hud: Hud, health: PlayerHealth,
@@ -82,12 +84,16 @@ func stamina_max() -> float:
 
 func _tick_stamina(delta: float) -> void:
 	_sprinting = _player != null and _player.sprint_active
+	if _stamina_boost_t > 0.0:
+		_stamina_boost_t -= delta
+		if _stamina_boost_t <= 0.0:
+			_stamina_boost_mult = 1.0
 	if _sprinting:
 		stamina = maxf(0.0, stamina - SPRINT_DRAIN * delta)
 	elif thirst > 0.0:
-		var rate := REGEN_IDLE
+		var rate := REGEN_IDLE * _stamina_boost_mult
 		if _player != null and _player.moving:
-			rate = REGEN_WALK
+			rate = REGEN_WALK * _stamina_boost_mult
 		stamina = minf(stamina_max(), stamina + rate * delta)
 	else:
 		# Dehydrated: no regeneration (stamina only goes down).
@@ -134,6 +140,25 @@ func try_attack_cost() -> bool:
 		return false
 	stamina = maxf(0.0, stamina - ATTACK_COST)
 	return true
+
+
+## Generic stamina spend for non-swing actions (gunshots, barricade
+## repair). Returns false with feedback if gassed.
+func spend_stamina(amount: float) -> bool:
+	if stamina < amount:
+		if _hud != null:
+			_hud.pulse_stamina()
+		Sound.play("click", -8.0, 0.6) # dull denied blip
+		return false
+	stamina = maxf(0.0, stamina - amount)
+	return true
+
+
+## Painkillers: temporary stamina-regen boost. Call from Inventory.use().
+func boost_stamina_regen(multiplier: float, seconds: float) -> void:
+	_stamina_boost_mult = multiplier
+	_stamina_boost_t = seconds
+	_push_hud()
 
 
 func eat_food() -> void:

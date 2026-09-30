@@ -19,6 +19,7 @@ var _roof_hidden := {}
 var _bids := {} # building index -> interact id
 var _bbusy := {} # building index -> true while swinging
 var _broof_hidden := {}
+var barricades: BarricadeManager # set by main: boarded doors refuse to swing
 
 
 func setup(hood: NeighborhoodBuilder, interact: InteractManager,
@@ -88,11 +89,24 @@ func _clear_busy(i: int) -> void:
 func _toggle(i: int) -> void:
 	if bool(_busy.get(i, false)):
 		return
+	if barricades != null and barricades.has_boards(BarricadeManager.key_for_house(i)):
+		# Boarded shut: knock the boards off first (BARRICADE prompt).
+		_interact.set_prompt(int(_ids[i]), "BOARDED SHUT")
+		Sound.play("click", -4.0, 0.6)
+		var tw := create_tween()
+		tw.tween_interval(1.4)
+		tw.tween_callback(_revert_board_prompt.bind(i))
+		return
 	var h := _hood.houses[i] as Dictionary
 	var door := h["door"] as Dictionary
 	var will_open := not bool(door["open"])
 	Sound.play_3d("door", (door["pos"] as Vector3) + Vector3(0, 1.2, 0))
 	set_door_open(i, will_open, true)
+
+
+func _revert_board_prompt(i: int) -> void:
+	if barricades == null or not barricades.has_boards(BarricadeManager.key_for_house(i)):
+		_interact.set_prompt(int(_ids[i]), "OPEN DOOR")
 
 
 ## Building doors. Locked doors (police station) refuse to swing until the
@@ -134,6 +148,13 @@ func _toggle_b(j: int) -> void:
 		return
 	var b := _hood.buildings[j] as Dictionary
 	var door := b["door"] as Dictionary
+	if barricades != null and barricades.has_boards(BarricadeManager.key_for_building(j)):
+		_interact.set_prompt(int(_bids[j]), "BOARDED SHUT")
+		Sound.play("click", -4.0, 0.6)
+		var tw := create_tween()
+		tw.tween_interval(1.4)
+		tw.tween_callback(_revert_bboard_prompt.bind(j))
+		return
 	if bool(door.get("locked", false)) and not try_unlock_building(j):
 		# No key, no lockpick: thud + a temporary hint prompt.
 		_interact.set_prompt(int(_bids[j]), "LOCKED — NEED KEY")
@@ -150,6 +171,11 @@ func _toggle_b(j: int) -> void:
 func _revert_lock_prompt(j: int) -> void:
 	if is_building_locked(j):
 		_interact.set_prompt(int(_bids[j]), "LOCKED")
+
+
+func _revert_bboard_prompt(j: int) -> void:
+	if barricades == null or not barricades.has_boards(BarricadeManager.key_for_building(j)):
+		_interact.set_prompt(int(_bids[j]), "OPEN DOOR")
 
 
 func set_building_door_open(j: int, open: bool, animate := true) -> void:
