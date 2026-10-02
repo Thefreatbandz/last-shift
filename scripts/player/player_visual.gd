@@ -119,7 +119,7 @@ func set_target_yaw(y: float) -> void:
 
 
 func set_flashlight(on: bool) -> void:
-	_flashlight.light_energy = 6.0 if on else 0.0
+	_flashlight.light_energy = 8.0 if on else 0.0
 	_m_lens.emission_energy_multiplier = 5.0 if on else 0.0
 
 
@@ -630,12 +630,13 @@ func _idle(delta: float, k: float) -> void:
 
 
 func _make_materials() -> void:
-	_m_jacket = _mat(Color(0.23, 0.24, 0.27), 0.78, 0.14) # charcoal, faint rim
-	_m_jacket_dark = _mat(Color(0.16, 0.17, 0.19), 0.85) # collar, hem, cuffs
+	_m_jacket = _mat(Color(0.23, 0.24, 0.27), 0.82, 0.14) # charcoal, faint rim
+	_m_jacket_dark = _mat(Color(0.16, 0.17, 0.19), 0.88) # collar, hem, cuffs
 	_m_pants = _mat(Color(0.33, 0.32, 0.26), 0.85) # cargo khaki-olive
 	_m_pants_dark = _mat(Color(0.25, 0.24, 0.20), 0.90) # pockets, belt
-	_m_boots = _mat(Color(0.18, 0.13, 0.09), 0.55) # worn leather, slight sheen
-	_m_boots_dark = _mat(Color(0.12, 0.09, 0.06), 0.62) # toe, heel, laces
+	_m_boots = _mat(Color(0.15, 0.11, 0.08), 0.50, 0.0) # worn leather, sheen
+	_m_boots.metallic = 0.15 # V3: faint leather sheen
+	_m_boots_dark = _mat(Color(0.10, 0.075, 0.05), 0.58) # toe, heel, laces
 	_m_sole = _mat(Color(0.07, 0.07, 0.07), 1.0) # rubber sole
 	_m_skin = _mat(Color(0.74, 0.56, 0.43), 0.60)
 	_m_skin_shade = _mat(Color(0.62, 0.46, 0.34), 0.65) # brow, nose, ears
@@ -646,7 +647,7 @@ func _make_materials() -> void:
 	_m_mouth = _mat(Color(0.40, 0.26, 0.20), 0.70)
 	_m_dark = _mat(Color(0.09, 0.09, 0.10), 0.70) # zipper, buckles, lamp
 	# HD upgrade pass: gloves, knee pads, scuffs, flashlight lens.
-	_m_glove = _mat(Color(0.16, 0.14, 0.11), 0.85) # worn work gloves
+	_m_glove = _mat(Color(0.11, 0.10, 0.08), 0.85) # dark work gloves
 	_m_scuff = _mat(Color(0.15, 0.15, 0.16), 0.95) # dirt/scuff patches
 	_m_lens = StandardMaterial3D.new() # flashlight lens, glows when lit
 	_m_lens.albedo_color = Color(0.9, 0.88, 0.80)
@@ -912,7 +913,7 @@ func _build_flashlight() -> void:
 	# Glowing lens at the lamp's front face.
 	_box(lamp_mount, Vector3(0.07, 0.07, 0.02), Vector3(0, 0, -0.085), _m_lens)
 	_flashlight = SpotLight3D.new()
-	_flashlight.spot_range = 30.0
+	_flashlight.spot_range = 34.0
 	_flashlight.spot_angle = 42.0
 	_flashlight.light_color = Color(1.0, 0.95, 0.85)
 	_flashlight.light_energy = 0.0

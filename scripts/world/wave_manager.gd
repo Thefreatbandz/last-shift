@@ -31,6 +31,7 @@ var _zombies: ZombieManager
 var _hud: Hud
 var _dusk_fired := false
 var _spawned_this_night := false
+var _reaggro_t := 0.0
 
 
 ## Pure escalation formulas (unit-testable, no scene needed).
@@ -65,7 +66,7 @@ func zombies_remaining() -> int:
 	return n
 
 
-func _physics_process(_delta: float) -> void:
+func _physics_process(delta: float) -> void:
 	if _tm == null:
 		return
 	var h := _tm.time_hours
@@ -88,6 +89,15 @@ func _physics_process(_delta: float) -> void:
 					_spawn_wave(wave_number + 1)
 		"night":
 			_hud.set_wave(wave_number + 1, zombies_remaining())
+			# Re-aggro: wave zombies that lost the player (stale stimulus,
+			# fell back to WANDER) get a fresh noise ping so they keep
+			# pressing the house instead of milling around. on_noise
+			# no-ops for CHASE/ATTACK zombies, so this only re-engages
+			# zombies that actually lost him.
+			_reaggro_t += delta
+			if _reaggro_t >= 5.0:
+				_reaggro_t = 0.0
+				_reaggro_wave()
 			if zombies_remaining() == 0 and _spawned_this_night:
 				_clear_wave()
 			elif h >= 6.0 and h < 12.0 and zombies_remaining() > 0:
@@ -118,6 +128,18 @@ func _spawn_wave(n: int) -> void:
 		z.on_noise(pp, 120.0)
 		wave_zombies.append(z)
 	Sound.play("groan1", -2.0, 0.8)
+
+
+## Night loop: re-aggro wave zombies that lost the player. on_noise
+## no-ops for CHASE/ATTACK zombies, so only zombies that fell back to
+## WANDER/SUSPICIOUS/LOSE get a fresh stimulus.
+func _reaggro_wave() -> void:
+	if _player == null:
+		return
+	var pp := _player.global_position
+	for z in wave_zombies:
+		if is_instance_valid(z) and not z.is_queued_for_deletion() and not z.is_dead():
+			z.on_noise(pp, 120.0)
 
 
 func _edge_spawn(rng: RandomNumberGenerator, pp: Vector3) -> Vector3:

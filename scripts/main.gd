@@ -90,6 +90,7 @@ func _start_run(seed: int) -> void:
 	_run_started = true
 	RunState.world_seed = seed
 	neighborhood.build_world(seed)
+	ApocalypseDressing.new().dress(neighborhood)
 	player.global_position = neighborhood.player_start
 
 	var visual: PlayerVisual = player.get_node("Visual") as PlayerVisual
@@ -186,7 +187,7 @@ func _start_run(seed: int) -> void:
 	# barricades, zombies and the player — all of which exist now.
 	if neighborhood.interior_zones != null:
 		neighborhood.interior_zones.setup_runtime(player, zombies, doors,
-			barricades, noise, camera_rig)
+			barricades, noise, camera_rig, hud)
 
 	inventory.hud = hud
 	inventory.visual = visual
@@ -256,7 +257,28 @@ func _start_run(seed: int) -> void:
 	# Building types: seeded interior loot containers per building.
 	for bl in neighborhood.building_loot:
 		var bd := bl as Dictionary
-		loot.add_container(bd["pos"], bd["items"], String(bd.get("kind", "crate")))
+		var bc := loot.add_container(bd["pos"], bd["items"],
+			String(bd.get("kind", "crate")))
+		if bool(bd.get("exempt_guns", false)):
+			bc.scarcity_exempt_guns = true
+
+	# Gun-findability (2026-10-02): a dead officer OUTSIDE the police
+	# station, 3.5m past the (locked) exterior door — a findable pistol
+	# with zero key/lockpick needed. Deterministic: door_pos/face come
+	# from the zone record, no RNG draws. Appended AFTER all existing
+	# containers so every existing container_id (and the scarcity rolls
+	# keyed off them) is unchanged. The armory rifle inside is untouched.
+	if neighborhood.interior_zones != null:
+		for zr in neighborhood.interior_zones.zones:
+			var zd := zr as Dictionary
+			if String(zd.get("kind", "")) == "police":
+				var dp := zd["door_pos"] as Vector3
+				var bf := float(zd["face"])
+				var officer := loot.add_container(
+					dp + Vector3(0, 0, bf * 3.5),
+					[["pistol", 1], ["ammo_9mm", 6]], "officer_corpse")
+				officer.scarcity_exempt_guns = true
+				break
 
 	var crafting := Crafting.new()
 	crafting.name = "Crafting"
@@ -311,6 +333,12 @@ func _start_run(seed: int) -> void:
 	loot.loot_granted.connect(_on_loot_granted.bind(player))
 	crafting.crafted.connect(_on_crafted)
 	safehouse.claimed_house.connect(_on_house_claimed.bind(safehouse))
+
+	# Gun-findability (2026-10-02): day-1 pointer at the police armory.
+	# One banner, no objective system — the slim "FORTIFY — NIGHTFALL
+	# COMES" label and the dusk wave banner flows are untouched.
+	hud.show_banner("FIND WEAPONS",
+		"POLICE STATION (P ON MAP) HAS AN ARMORY", 5.0)
 
 
 func _unhandled_input(event: InputEvent) -> void:

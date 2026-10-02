@@ -26,6 +26,10 @@ var _lrng := RandomNumberGenerator.new()
 # Chop RNG: own stream for choppable dead trees (wood economy), so tree
 # placement never shifts layout, visual, or loot RNG streams.
 var _crng := RandomNumberGenerator.new()
+# Detail-pass RNG: dedicated stream for the v3 dressing/trim passes (seeded
+# from world_seed), so new cosmetic detail never shifts layout, visual,
+# loot, or chop streams.
+var _drng := RandomNumberGenerator.new()
 var _time := 0.0
 var world_seed := -1 # the seed this neighborhood was built from (-1 = unbuilt)
 var choppable_trees: Array = [] # ChoppableTree nodes (wood economy)
@@ -35,6 +39,7 @@ var _window_lit_mat: StandardMaterial3D
 var _lamp_mat: StandardMaterial3D
 var _cone_mat: StandardMaterial3D
 var _spot_lights: Array[SpotLight3D] = []
+var _porch_lights: Array[OmniLight3D] = [] # real porch lights (safehouse)
 var _smoke_tex: ImageTexture
 
 # Tree canopy pivots for wind sway: each entry [Node3D, phase, amplitude].
@@ -72,6 +77,7 @@ var player_start := Vector3.ZERO
 var road_ew_z := 0.0 # EW road center line
 var road_ns_x := 20.0 # NS road center line
 var _road_rects: Array[Rect2] = [] # road footprints (for scatter rejection)
+var _dirt_rects: Array[Rect2] = [] # dirt-road footprints: subset of _road_rects (props/tests)
 var _lot_rects: Array[Rect2] = [] # house lot footprints (with margins)
 var _lot_specs: Array = [] # seeded house lots: {pos, face, w, d}
 var _gas_rect := Rect2() # gas station footprint
@@ -146,8 +152,23 @@ var _m_counter: StandardMaterial3D
 var _m_bed: StandardMaterial3D
 var _m_bedding: StandardMaterial3D
 var _m_rust_patch: StandardMaterial3D
+var _m_dumpster: StandardMaterial3D # rusted green dumpster body
+var _m_newspaper: StandardMaterial3D # newspaper-vending box blue
+var _m_bottle: StandardMaterial3D # bottle/can glass
+var _m_sign: StandardMaterial3D # aged hanging sign board
+var _m_awning: StandardMaterial3D # terracotta awning canvas
+var _m_awning_stripe: StandardMaterial3D # pale awning stripe/valance
+var _m_downspout: StandardMaterial3D # galvanized gutter metal
+var _m_bench: StandardMaterial3D # bus-stop bench slats
 var _m_brushwall: StandardMaterial3D # dense dark undergrowth: the visible map edge
 var _m_grime: StandardMaterial3D # dark weather grime at wall bases
+var _m_patch_dirt: StandardMaterial3D # ground variation: worn dirt patch
+var _m_patch_dark: StandardMaterial3D # ground variation: dark trampled grass
+var _m_patch_ash: StandardMaterial3D # ground variation: pale ash/scorch
+var _m_hydrant: StandardMaterial3D # fire hydrant red
+var _m_hydrant_dark: StandardMaterial3D
+var _m_cone: StandardMaterial3D # traffic cone orange
+var _m_cone_band: StandardMaterial3D # cone reflective band
 
 
 func _ready() -> void:
@@ -167,6 +188,7 @@ func build_world(seed: int) -> void:
 	_vrng.seed = seed ^ 0x9E3779B9
 	_lrng.seed = seed ^ 0xC10C41
 	_crng.seed = seed ^ 0x5EED71
+	_drng.seed = absi(hash([world_seed, 0xD371]))
 	_layout_roads()
 	_layout_gas_station()
 	_layout_house_lots() # lots first: grass/debris/scatter can reject them
@@ -190,6 +212,13 @@ func build_world(seed: int) -> void:
 	_layout_safehouse_info() # sets player_start / safehouse_porch
 	_layout_zombie_spawns()
 	_layout_outdoor_loot() # seeded container variety, own RNG stream
+	_build_props_v2() # density pass: pallets, dirt-road fences, sandbags, trash
+	_build_ground_patches() # quality pass: dirt/ash/dark-grass variation
+	_build_street_props() # quality pass: hydrants + traffic cones
+	_build_dressing_v3() # v3 density: bus stop, dumpsters, news boxes, bottles, branches
+	_build_house_trim_v2() # v3 trim: gutters, downspouts, window boxes, awnings
+	_build_commercial_trim_v2() # v3 trim: blade signs, roof AC, awnings, gutters
+	_build_ground_detail_v2() # v3 ground: more patches, oil, leaf piles, pavement tufts
 
 
 func _clear_world() -> void:
@@ -215,10 +244,12 @@ func _clear_world() -> void:
 	safehouse_porch = Vector3.ZERO
 	player_start = Vector3.ZERO
 	_road_rects.clear()
+	_dirt_rects.clear()
 	_lot_rects.clear()
 	_lot_specs.clear()
 	_sway.clear()
 	_spot_lights.clear()
+	_porch_lights.clear()
 	_gas_pos = Vector3.ZERO
 
 
@@ -235,6 +266,26 @@ func _layout_roads() -> void:
 		Rect2(-MAP_HALF, road_ew_z - 7.0, MAP_HALF * 2.0, 14.0),
 		Rect2(road_ns_x - 7.0, -MAP_HALF, 14.0, MAP_HALF * 2.0),
 	]
+	# --- World-density pass: two dirt roads, seeded from the cosmetic
+	# stream (like the warehouse) so the anchor layout draws above never
+	# shift. Dirt A runs from the main grid out to the forest edge;
+	# dirt B connects the blocks behind the house bands. ~4m wide, brown
+	# packed earth, no lane paint / sidewalks / curbs. The offsets are
+	# chosen so neither dirt road can touch the gas-station rect
+	# (gas sits at road +/-46 x, road +/-42 z with half-extents 11 x 9).
+	_dirt_rects.clear()
+	var dx1: float = [18.0, 24.0, 30.0][_vrng.randi() % 3]
+	var sx1 := 1.0 if _vrng.randf() < 0.5 else -1.0
+	var sz1 := 1.0 if _vrng.randf() < 0.5 else -1.0
+	var d1x := road_ns_x + sx1 * dx1
+	var d1z0 := minf(road_ew_z, sz1 * MAP_HALF)
+	var d1z1 := maxf(road_ew_z, sz1 * MAP_HALF)
+	_dirt_rects.append(Rect2(d1x - 2.0, d1z0, 4.0, d1z1 - d1z0))
+	var dz2: float = [18.0, 24.0, 28.0][_vrng.randi() % 3]
+	var sz2 := 1.0 if _vrng.randf() < 0.5 else -1.0
+	var d2z := road_ew_z + sz2 * dz2
+	_dirt_rects.append(Rect2(road_ns_x - 62.0, d2z - 2.0, 124.0, 4.0))
+	_road_rects.append_array(_dirt_rects)
 
 
 func _layout_gas_station() -> void:
@@ -315,16 +366,17 @@ func _open_spot_visual(margin := 1.0) -> Vector3:
 func _layout_zombie_spawns() -> void:
 	# Ten scatter points on the expanded map (same density as the old six):
 	# open ground, away from the player start and the safehouse porch,
-	# spread apart.
+	# spread apart. 32m from the player start keeps day-1 zombies offscreen
+	# (field report: "random spawning zombies" popping into view).
 	zombie_spawns.clear()
 	var tries := 0
 	while zombie_spawns.size() < 10 and tries < 600:
 		tries += 1
 		var p := _open_spot(2.0)
 		p.y = 0.3
-		if p.distance_to(player_start) < 16.0:
+		if p.distance_to(player_start) < 32.0:
 			continue
-		if p.distance_to(safehouse_porch) < 10.0:
+		if p.distance_to(safehouse_porch) < 12.0:
 			continue
 		var ok := true
 		for s in zombie_spawns:
@@ -554,6 +606,10 @@ func layout_hash() -> String:
 		var bp := bd["pos"] as Vector3
 		parts.append("b:%s:%.2f,%.2f|f:%.1f" % [
 			String(bd["kind"]), bp.x, bp.z, float(bd["face"])])
+	parts.append("dirt:%d" % _dirt_rects.size())
+	for dr in _dirt_rects:
+		parts.append("dr:%.2f,%.2f|%.1fx%.1f" % [
+			dr.position.x, dr.position.y, dr.size.x, dr.size.y])
 	for ip in _interior_parts:
 		parts.append("in:" + ip)
 	return "|".join(parts)
@@ -579,6 +635,56 @@ func interior_hash() -> String:
 func _layout_building_lots() -> void:
 	var bt := BuildingTypes.new()
 	_building_specs = bt.layout_lots(self, BuildingTypes.pick_kinds(_rng))
+	# World-density pass: 4 extra commercial lots in empty areas, reusing
+	# existing kinds. Placed from the cosmetic stream (like the warehouse)
+	# so the anchor layout draws never shift; they flow through the normal
+	# _build_commercial() path, so loot, zombie spawns and door wiring all
+	# work exactly like the anchors.
+	for kind in _pick_extra_kinds():
+		var spec := _place_extra_lot(String(kind))
+		if not spec.is_empty():
+			_building_specs.append(spec)
+
+
+## Expansion kinds: generic non-zoned kinds only (corner store, grocery).
+## Zoned kinds are deliberately excluded — InteriorZones keys exterior
+## roots by kind name ("bld_<kind>"), so a duplicate zoned kind would wire
+## its teleport trigger to the wrong building.
+func _pick_extra_kinds() -> Array:
+	var pool: Array = [BuildingTypes.CORNER, BuildingTypes.GROCERY]
+	var kinds: Array = []
+	while kinds.size() < 4:
+		kinds.append(pool[_vrng.randi() % pool.size()])
+	return kinds
+
+
+## Expansion-lot placement: mirrors BuildingTypes._place_lot, but draws
+## from the cosmetic stream (like the warehouse) so the anchor layout RNG
+## sequence never shifts. Lots reject roads (dirt included), house lots,
+## the gas station and each other, and face the EW main road.
+func _place_extra_lot(kind: String) -> Dictionary:
+	var dim: Vector3 = BuildingTypes.DIMS[kind]
+	for _attempt in 160:
+		var x := _vrng.randf_range(-86.0, 86.0)
+		var z := _vrng.randf_range(-86.0, 86.0)
+		var p := Vector3(x, 0, z)
+		var m := maxf(dim.x, dim.z) * 0.5 + 3.0
+		if _on_road(p, m + 4.0):
+			continue
+		var rect := Rect2(x - dim.x * 0.5 - 2.0, z - dim.z * 0.5 - 2.0,
+			dim.x + 4.0, dim.z + 4.0)
+		if not _lot_free(rect):
+			continue
+		if _point_in_lots(p, m + 2.0):
+			continue
+		_lot_rects.append(rect)
+		# Face the east-west main road (all building doors sit on local +/-Z).
+		var face := -signf(p.z - road_ew_z)
+		if face == 0.0:
+			face = 1.0
+		return {"kind": kind, "pos": p, "face": face,
+			"w": dim.x, "d": dim.z, "h": dim.y}
+	return {}
 
 
 ## Builds the commercial buildings (after houses, before trees/props).
@@ -667,8 +773,10 @@ func bx_register(entry: Dictionary) -> void:
 	buildings.append(entry)
 
 
-func bx_add_loot(pos: Vector3, items: Array, kind := "crate") -> void:
-	building_loot.append({"pos": pos, "items": items, "kind": kind})
+func bx_add_loot(pos: Vector3, items: Array, kind := "crate",
+		exempt_guns := false) -> void:
+	building_loot.append({"pos": pos, "items": items, "kind": kind,
+		"exempt_guns": exempt_guns})
 
 
 func bx_brute(pos: Vector3) -> void:
@@ -694,13 +802,15 @@ func _process(delta: float) -> void:
 
 
 func set_night_factor(f: float) -> void:
-	_window_lit_mat.emission_energy_multiplier = lerpf(0.15, 2.6, f)
-	_lamp_mat.emission_energy_multiplier = lerpf(0.4, 4.0, f)
+	_window_lit_mat.emission_energy_multiplier = lerpf(0.15, 3.2, f)
+	_lamp_mat.emission_energy_multiplier = lerpf(0.4, 5.0, f)
 	var c := _cone_mat.albedo_color
-	c.a = lerpf(0.03, 0.14, f)
+	c.a = lerpf(0.03, 0.28, f)
 	_cone_mat.albedo_color = c
 	for sp in _spot_lights:
-		sp.light_energy = lerpf(0.0, 3.0, f)
+		sp.light_energy = lerpf(0.0, 4.5, f)
+	for pl in _porch_lights:
+		pl.light_energy = lerpf(0.0, 3.2, f)
 
 
 # ---------------------------------------------------------------- materials ---
@@ -783,6 +893,23 @@ func _make_materials() -> void:
 	_m_rust_patch = _std(Color(0.36, 0.20, 0.10), 1.0) # rust patches
 	_m_brushwall = _std(Color(0.10, 0.14, 0.08), 1.0) # dense dark undergrowth: the visible map edge
 	_m_grime = _std(Color(0.070, 0.063, 0.055), 1.0) # V2: heavy grime at wall bases
+	# Quality pass: ground variation patches (cheap flat quads, shared mats).
+	_m_patch_dirt = _std(Color(0.30, 0.24, 0.15), 1.0) # worn dirt
+	_m_patch_dark = _std(Color(0.13, 0.17, 0.09), 1.0) # trampled dark grass
+	_m_patch_ash = _std(Color(0.42, 0.40, 0.36), 1.0) # pale ash / scorch
+	_m_hydrant = _std(Color(0.62, 0.14, 0.10), 0.6)
+	_m_hydrant_dark = _std(Color(0.30, 0.08, 0.06), 0.7)
+	_m_cone = _std(Color(0.75, 0.32, 0.08), 0.8)
+	_m_cone_band = _std(Color(0.80, 0.80, 0.78), 0.5)
+	# V3 dressing/trim materials (quality pass part 2).
+	_m_dumpster = _std(Color(0.16, 0.30, 0.18), 0.7, 0.2)
+	_m_newspaper = _std(Color(0.14, 0.20, 0.34), 0.7, 0.2)
+	_m_bottle = _std(Color(0.12, 0.30, 0.16), 0.25, 0.6)
+	_m_sign = _std(Color(0.52, 0.42, 0.26), 0.8)
+	_m_awning = _std(Color(0.48, 0.28, 0.16), 0.9)
+	_m_awning_stripe = _std(Color(0.74, 0.66, 0.52), 0.9)
+	_m_downspout = _std(Color(0.55, 0.55, 0.57), 0.55, 0.5)
+	_m_bench = _std(Color(0.36, 0.26, 0.16), 0.85)
 
 	_m_headlight = StandardMaterial3D.new()
 	_m_headlight.albedo_color = Color(0.85, 0.82, 0.70)
@@ -954,11 +1081,15 @@ func _prism_mesh(hw: float, h: float, d: float) -> ArrayMesh:
 	return st.commit()
 
 
-func _noise_texture(base: Color, variation: float, cells: int, px: int) -> ImageTexture:
+func _noise_texture(base: Color, variation: float, cells: int, px: int,
+		r: RandomNumberGenerator = null) -> ImageTexture:
+	# r=null keeps the legacy behavior (layout stream); pass _vrng for
+	# cosmetic-only textures so the layout RNG sequence never shifts.
+	var rr := _rng if r == null else r
 	var grid := PackedFloat32Array()
 	grid.resize(cells * cells)
 	for i in grid.size():
-		grid[i] = _rng.randf()
+		grid[i] = rr.randf()
 	var img := Image.create(px, px, false, Image.FORMAT_RGBA8)
 	for y in px:
 		for x in px:
@@ -973,7 +1104,7 @@ func _noise_texture(base: Color, variation: float, cells: int, px: int) -> Image
 			var a := lerpf(grid[y0 * cells + x0], grid[y0 * cells + x1], fx)
 			var b := lerpf(grid[y1 * cells + x0], grid[y1 * cells + x1], fx)
 			var v := lerpf(a, b, fy)
-			var grain := 0.92 + 0.16 * _rng.randf()
+			var grain := 0.92 + 0.16 * rr.randf()
 			var shade := (1.0 - variation + variation * v) * grain
 			img.set_pixel(x, y, Color(base.r * shade, base.g * shade, base.b * shade, 1.0))
 	return ImageTexture.create_from_image(img)
@@ -1122,6 +1253,36 @@ func _build_roads() -> void:
 	_build_sidewalk_joints(ez, nx)
 	# Manhole covers, storm drains, faded crosswalks.
 	_build_street_details(ez, nx)
+	# Dirt roads: brown packed-earth strips with wheel ruts.
+	_build_dirt_roads()
+
+
+## Dirt roads: brown packed-earth strips with wheel ruts — no lane paint,
+## no sidewalks, no curbs. Tagged with the "dirt_road" meta for QA.
+func _build_dirt_roads() -> void:
+	if _dirt_rects.is_empty():
+		return
+	var dm := StandardMaterial3D.new()
+	dm.albedo_texture = _noise_texture(Color(0.30, 0.225, 0.14), 0.55, 8, 128, _vrng)
+	dm.uv1_scale = Vector3(10, 10, 10)
+	dm.roughness = 1.0
+	var rut_mat := _std(Color(0.20, 0.15, 0.10), 1.0) # packed wheel ruts
+	for dr in _dirt_rects:
+		var c := dr.get_center()
+		var strip := _box(self, Vector3(dr.size.x, 0.02, dr.size.y),
+			Vector3(c.x, -0.008, c.y), dm)
+		strip.set_meta("dirt_road", true)
+		# Two darker packed ruts where tires wore the earth down.
+		var along_x := dr.size.x > dr.size.y
+		for s in [-0.9, 0.9]:
+			var rut: MeshInstance3D
+			if along_x:
+				rut = _box(self, Vector3(dr.size.x, 0.012, 0.5),
+					Vector3(c.x, 0.004, c.y + s), rut_mat)
+			else:
+				rut = _box(self, Vector3(0.5, 0.012, dr.size.y),
+					Vector3(c.x + s, 0.004, c.y), rut_mat)
+			rut.set_meta("dirt_road", true)
 
 
 ## Manhole covers, storm drains and worn crosswalks. (Cosmetic: _vrng only.)
@@ -1547,6 +1708,16 @@ func _board_house(h: Dictionary) -> void:
 	_boards(root, fz + face * (t * 0.5 + 0.07), w)
 	safehouse_door_pivot = pivot
 	door["safehouse"] = true
+	# Real porch light (no shadows): a warm pool at the home base at night.
+	# Position matches the emissive porch lamp built in _house().
+	var pl := OmniLight3D.new()
+	pl.position = Vector3(1.05, 2.3, fz + face * 0.5)
+	pl.light_color = Color(1.0, 0.78, 0.52)
+	pl.light_energy = 0.0
+	pl.omni_range = 9.0
+	pl.shadow_enabled = false
+	root.add_child(pl)
+	_porch_lights.append(pl)
 
 
 func _build_interior(root: Node3D, w: float, d: float, face: float) -> void:
@@ -1612,6 +1783,18 @@ func _build_interior(root: Node3D, w: float, d: float, face: float) -> void:
 	_furn(_solid_box(root, Vector3(1.7, 0.32, 1.15), Vector3(bedx, 0.22, bedz), _m_bed))
 	_box(root, Vector3(1.6, 0.18, 1.05), Vector3(bedx, 0.47, bedz), _m_bedding)
 	_box(root, Vector3(0.45, 0.12, 0.7), Vector3(bedx - 0.5, 0.60, bedz), _m_cushion)
+	# End table beside the couch (fixed spot, no RNG draws) + a mug on top.
+	var etx := cx + 1.75
+	_furn(_solid_box(root, Vector3(0.5, 0.5, 0.5), Vector3(etx, 0.25, back), _m_table))
+	_cyl(root, 0.05, 0.04, 0.10, Vector3(etx, 0.55, back), _m_cushion)
+	# Potted plant in the front-right corner (fixed spot, no RNG draws).
+	var ppx := w * 0.5 - 1.0
+	var ppz := face * (d * 0.5 - 1.0)
+	_cyl(root, 0.20, 0.15, 0.35, Vector3(ppx, 0.175, ppz),
+		_std(Color(0.45, 0.28, 0.20), 0.9))
+	_furn(_solid(root, Vector3(0.45, 0.4, 0.45), Vector3(ppx, 0.2, ppz)))
+	_sphere(root, 0.30, Vector3(ppx, 0.62, ppz), _m_bush, true)
+	_sphere(root, 0.20, Vector3(ppx + 0.12, 0.85, ppz - 0.08), _m_bush, true)
 	# --- Detail-density pass: baseboards, ceiling light, stocked shelf. ---
 	# Baseboards: trim strips proud of the interior liner on all walls.
 	var bb := 0.065 # offset from liner plane toward room center
@@ -1742,26 +1925,25 @@ func _layout_house_lots() -> void:
 			continue
 		_lot_rects.append(rect)
 		_lot_specs.append({"pos": Vector3(hx, 0, hz), "face": -side, "w": w, "d": d})
-	# Ironclad guarantee: the map is mostly empty, so a coarse grid scan
-	# always finds room to reach the target count.
+	# Ironclad guarantee: the map is mostly empty, so a coarse full-map grid
+	# scan always finds room to reach the target count (the old single-row
+	# fallback could be fully blocked by a dirt road).
 	if _lot_specs.size() < target:
-		var bx := -86.0
-		while bx <= 86.0 and _lot_specs.size() < target:
-			for side in [1.0, -1.0]:
-				if _lot_specs.size() >= target:
-					break
-				if absf(bx - road_ns_x) < 12.0:
-					continue
-				var hz: float = road_ew_z + side * 19.0
-				if absf(hz) > 92.0:
-					continue
-				var rect := Rect2(bx - 7.3, hz - 6.8, 14.6, 13.6)
-				if not _lot_free(rect):
-					continue
-				_lot_rects.append(rect)
-				_lot_specs.append({"pos": Vector3(bx, 0, hz),
-					"face": -side, "w": 8.0, "d": 7.0})
-			bx += 12.0
+		var gx := -84.0
+		while gx <= 84.0 and _lot_specs.size() < target:
+			var gz := -84.0
+			while gz <= 84.0 and _lot_specs.size() < target:
+				if absf(gx - road_ns_x) > 10.0 or absf(gz - road_ew_z) > 10.0:
+					var rect := Rect2(gx - 7.3, gz - 6.8, 14.6, 13.6)
+					if _lot_free(rect):
+						_lot_rects.append(rect)
+						var gface := -signf(gz - road_ew_z)
+						if gface == 0.0:
+							gface = 1.0
+						_lot_specs.append({"pos": Vector3(gx, 0, gz),
+							"face": gface, "w": 8.0, "d": 7.0})
+				gz += 18.0
+			gx += 18.0
 	if _lot_specs.is_empty():
 		# Paranoia fallback: force one house on open ground.
 		_lot_rects.append(Rect2(-37.0, road_ew_z + 13.5, 14.0, 13.0))
@@ -1817,14 +1999,15 @@ func _build_streetlights() -> void:
 		spots.append(Vector3(road_ns_x + side2 * 5.6, 0, z))
 		z += _rng.randf_range(24.0, 34.0)
 		side2 = -side2
-	var real_light_idx := {1: true, 2: true, 3: true}
 	for i in spots.size():
 		var pos: Vector3 = spots[i]
 		# Arm reaches toward the nearest road.
 		var arm_dir := Vector3(0, 0, 1) if pos.z < road_ew_z else Vector3(0, 0, -1)
 		if absf(pos.x - road_ns_x) < absf(pos.z - road_ew_z):
 			arm_dir = Vector3(1, 0, 0) if pos.x < road_ns_x else Vector3(-1, 0, 0)
-		_streetlight(pos, arm_dir, real_light_idx.has(i))
+		# Every 3rd lamp gets a real spotlight (no shadows): warm pools of
+		# light along the roads at night. Capped: ~5 of ~14 lamps.
+		_streetlight(pos, arm_dir, i % 3 == 1)
 
 
 func _streetlight(pos: Vector3, arm_dir: Vector3, with_spot: bool) -> void:
@@ -1903,10 +2086,17 @@ func _tree_leafy(pos: Vector3, s: float, phase: float, sickly: bool) -> void:
 	root.add_child(pivot)
 	# Sickly trees keep the shape but wear the dying-yellow canopy.
 	var leaf_a := _m_leaf_dead if sickly else _m_leaf
-	_sphere(pivot, 1.35 * s, Vector3(0, 0.4 * s, 0), leaf_a, true) # faceted canopy
-	_sphere(pivot, 1.00 * s, Vector3(0.9 * s, -0.1 * s, 0.4 * s), _m_leaf2, true)
-	_sphere(pivot, 0.95 * s, Vector3(-0.85 * s, 0.0, -0.35 * s), _m_leaf2, true)
-	_sphere(pivot, 0.70 * s, Vector3(0.1 * s, 1.15 * s, -0.2 * s), leaf_a, true) # crown
+	# Canopies cast no shadow: at the flattened morning/evening sun angle a
+	# faceted canopy throws an oversized blobby shadow that reads as a
+	# rendering bug on porches (Tbandz iPhone field report). The trunk keeps
+	# casting, so trees still ground themselves in the scene.
+	for c in [
+		_sphere(pivot, 1.35 * s, Vector3(0, 0.4 * s, 0), leaf_a, true),
+		_sphere(pivot, 1.00 * s, Vector3(0.9 * s, -0.1 * s, 0.4 * s), _m_leaf2, true),
+		_sphere(pivot, 0.95 * s, Vector3(-0.85 * s, 0.0, -0.35 * s), _m_leaf2, true),
+		_sphere(pivot, 0.70 * s, Vector3(0.1 * s, 1.15 * s, -0.2 * s), leaf_a, true),
+	]:
+		c.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_sway.append([pivot, phase, 0.035])
 	_solid(root, Vector3(0.5, 2.2, 0.5), Vector3(0, 1.1, 0))
 
@@ -2109,9 +2299,10 @@ func _build_fences() -> void:
 		count += 1
 
 
-func _fence_run(center: Vector3, length: float) -> void:
+func _fence_run(center: Vector3, length: float, rot_y := 0.0) -> void:
 	var root := Node3D.new()
 	root.position = center
+	root.rotation.y = rot_y
 	add_child(root)
 	var n := int(length / 2.0)
 	var lean_i := _vrng.randi_range(0, n) if n > 0 else -1 # one tired post leans
@@ -2394,6 +2585,211 @@ func _build_props() -> void:
 		_solid(froot, Vector3(flen + 0.2, 1.15, 0.35), Vector3(0, 0.57, 0))
 
 
+## World-density pass (runs LAST in build_world, after the safehouse porch
+## and player start are known): wooden pallet stacks, extra fences flanking
+## the dirt roads, sandbag lines, extra trash piles. All cosmetic (_vrng +
+## visual spot samplers): the layout RNG stream and the hash are untouched.
+func _build_props_v2() -> void:
+	var sand_mat := _std(Color(0.55, 0.48, 0.34), 1.0)
+	# Pallet stacks on open ground, clear of the porch / spawn.
+	for _i in 6:
+		var p := _porch_safe_spot(2.0, 8.0)
+		var n := _vrng.randi_range(3, 5)
+		for k in n:
+			_box(self, Vector3(1.2, 0.14, 1.0),
+				p + Vector3(_vrng.randf_range(-0.1, 0.1), 0.10 + k * 0.16,
+					_vrng.randf_range(-0.1, 0.1)),
+				_m_wood, _vrng.randf_range(-0.2, 0.2))
+		_solid(self, Vector3(1.3, 0.9, 1.1), p + Vector3(0, 0.45, 0))
+	# Fences flanking the dirt roads (never on the road, a lot, or the porch).
+	for dr in _dirt_rects:
+		for _fi in 2:
+			var along_x := dr.size.x > dr.size.y
+			var c := dr.get_center()
+			var t := _vrng.randf_range(0.15, 0.85)
+			var side := 1.0 if _vrng.randf() < 0.5 else -1.0
+			var fp: Vector3
+			var rot := 0.0
+			if along_x:
+				fp = Vector3(c.x + (t - 0.5) * dr.size.x, 0,
+					c.y + side * (dr.size.y * 0.5 + 3.4))
+			else:
+				rot = PI * 0.5
+				fp = Vector3(c.x + side * (dr.size.x * 0.5 + 3.4), 0,
+					c.y + (t - 0.5) * dr.size.y)
+			if _on_road(fp, 1.0) or _point_in_lots(fp, 1.5):
+				continue
+			if fp.distance_to(player_start) < 6.0 \
+					or fp.distance_to(safehouse_porch) < 6.0:
+				continue
+			_fence_run(fp, _vrng.randf_range(4.0, 6.5), rot)
+	# Sandbag lines: low cover rows near commercial fronts, off to the side
+	# of the door path.
+	for _i in 4:
+		if _building_specs.is_empty():
+			break
+		var spec := _building_specs[_vrng.randi() % _building_specs.size()] as Dictionary
+		var bp := spec["pos"] as Vector3
+		var bw := float(spec["w"])
+		var bd := float(spec["d"])
+		var face := float(spec["face"])
+		var sp := bp + Vector3(bw * 0.5 + _vrng.randf_range(2.5, 4.5), 0,
+			face * (bd * 0.5 + _vrng.randf_range(1.0, 3.0)))
+		if _on_road(sp, 1.0) or _point_in_lots(sp, 1.0):
+			continue
+		if sp.distance_to(player_start) < 6.0 \
+				or sp.distance_to(safehouse_porch) < 6.0:
+			continue
+		_sandbag_line(sp, _vrng.randf() * TAU, sand_mat)
+	# Extra trash piles: curbsides and dirt-road shoulders.
+	for _i in 12:
+		var tp: Vector3
+		if not _dirt_rects.is_empty() and _vrng.randf() < 0.5:
+			tp = _dirt_side_spot()
+		else:
+			tp = _curb_spot(true)
+		if _point_in_lots(tp, 0.5):
+			continue
+		var tb := _sphere(self, _vrng.randf_range(0.35, 0.5),
+			tp + Vector3(0, 0.28, 0), _m_trash)
+		tb.scale.y = 0.7
+
+
+func _build_ground_patches() -> void:
+	# Quality pass: flat ground-variation quads (worn dirt, trampled dark
+	# grass, pale ash) scattered on open grass. Cosmetic RNG only — the
+	# layout stream never shifts. Rejects roads, lots, the porch and the
+	# player start so nothing sits underfoot where it matters.
+	var mats := [_m_patch_dirt, _m_patch_dark, _m_patch_ash]
+	var placed := 0
+	var tries := 0
+	while placed < 48 and tries < 300:
+		tries += 1
+		var p := Vector3(_vrng.randf_range(-88, 88), 0, _vrng.randf_range(-88, 88))
+		if _on_road(p, 1.5) or _point_in_lots(p, 1.0):
+			continue
+		if p.distance_to(player_start) < 5.0 or p.distance_to(safehouse_porch) < 5.0:
+			continue
+		var s := _vrng.randf_range(1.6, 4.2)
+		_box(self, Vector3(s, 0.012, s * _vrng.randf_range(0.6, 1.0)),
+			Vector3(p.x, 0.018, p.z), mats[_vrng.randi() % 3],
+			_vrng.randf_range(0.0, TAU))
+		placed += 1
+	# Road cracks: thin dark seams on the asphalt.
+	var cracked := 0
+	tries = 0
+	while cracked < 22 and tries < 120:
+		tries += 1
+		var on_ew := _vrng.randf() < 0.5
+		var p := Vector3(_vrng.randf_range(-70, 70), 0, 0)
+		if on_ew:
+			p = Vector3(p.x, 0, road_ew_z + _vrng.randf_range(-3.2, 3.2))
+		else:
+			p = Vector3(road_ns_x + _vrng.randf_range(-3.2, 3.2), 0, p.x)
+		_box(self, Vector3(_vrng.randf_range(0.10, 0.22), 0.012,
+				_vrng.randf_range(1.2, 3.4)),
+			Vector3(p.x, 0.012, p.z), _m_asphalt_crack,
+			_vrng.randf_range(-0.4, 0.4))
+		cracked += 1
+
+
+func _build_street_props() -> void:
+	# Quality pass: fire hydrants on sidewalk corners + knocked-over
+	# traffic cones near the roads. Cosmetic RNG only.
+	for _i in 6:
+		var p := _curb_spot(true)
+		if _point_in_lots(p, 0.5):
+			continue
+		_hydrant(p)
+	for _i in 9:
+		var p := _road_point_near()
+		_cone(p, _vrng.randf() < 0.35)
+
+
+func _hydrant(p: Vector3) -> void:
+	var root := Node3D.new()
+	root.position = p
+	root.rotation.y = _vrng.randf() * TAU
+	add_child(root)
+	_cyl(root, 0.16, 0.20, 0.62, Vector3(0, 0.31, 0), _m_hydrant) # body
+	_cyl(root, 0.20, 0.20, 0.10, Vector3(0, 0.05, 0), _m_hydrant_dark) # base
+	_sphere(root, 0.15, Vector3(0, 0.68, 0), _m_hydrant) # dome cap
+	_cyl(root, 0.09, 0.09, 0.44, Vector3(0, 0.42, 0), _m_hydrant_dark) # side caps bar
+	_box(root, Vector3(0.10, 0.10, 0.10), Vector3(0, 0.78, 0), _m_hydrant_dark) # top nut
+	_solid(root, Vector3(0.4, 0.7, 0.4), Vector3(0, 0.35, 0))
+
+
+func _cone(p: Vector3, tipped: bool) -> void:
+	var root := Node3D.new()
+	root.position = p
+	root.rotation.y = _vrng.randf() * TAU
+	add_child(root)
+	if tipped:
+		root.rotation.z = PI * 0.5 - _vrng.randf_range(0.0, 0.2)
+		root.position.y = 0.18
+	_cyl(root, 0.03, 0.16, 0.52, Vector3(0, 0.28, 0), _m_cone) # cone
+	_cyl(root, 0.085, 0.115, 0.10, Vector3(0, 0.33, 0), _m_cone_band) # band
+	_box(root, Vector3(0.34, 0.04, 0.34), Vector3(0, 0.02, 0), _m_cone) # base
+
+
+func _road_point_near() -> Vector3:
+	# A point just off a road edge (for cones).
+	if _vrng.randf() < 0.5:
+		return Vector3(_vrng.randf_range(-70, 70), 0,
+			road_ew_z + (4.6 if _vrng.randf() < 0.5 else -4.6))
+	return Vector3(road_ns_x + (4.6 if _vrng.randf() < 0.5 else -4.6), 0,
+		_vrng.randf_range(-70, 70))
+
+
+## A low sandbag line: two staggered rows of bags, solid low cover.
+func _sandbag_line(center: Vector3, rot_y: float, mat: Material) -> void:
+	var root := Node3D.new()
+	root.position = center
+	root.rotation.y = rot_y
+	add_child(root)
+	var n := _vrng.randi_range(5, 8)
+	for i in n:
+		var lx := (float(i) - float(n - 1) * 0.5) * 0.62
+		_box(root, Vector3(0.58, 0.24, 0.36), Vector3(lx, 0.13, 0), mat,
+			_vrng.randf_range(-0.12, 0.12))
+		if _vrng.randf() < 0.7:
+			_box(root, Vector3(0.58, 0.24, 0.36),
+				Vector3(lx + 0.3, 0.36, _vrng.randf_range(-0.05, 0.05)), mat,
+				_vrng.randf_range(-0.15, 0.15))
+	_solid(root, Vector3(n * 0.62, 0.6, 0.45), Vector3(0, 0.3, 0))
+
+
+## Random point just off a dirt-road shoulder (cosmetic stream).
+func _dirt_side_spot() -> Vector3:
+	var dr := _dirt_rects[_vrng.randi() % _dirt_rects.size()]
+	var c := dr.get_center()
+	var along_x := dr.size.x > dr.size.y
+	var t := _vrng.randf_range(0.05, 0.95)
+	var side := 1.0 if _vrng.randf() < 0.5 else -1.0
+	var off := _vrng.randf_range(2.8, 4.2)
+	if along_x:
+		return Vector3(c.x + (t - 0.5) * dr.size.x, 0,
+			c.y + side * (dr.size.y * 0.5 + off))
+	return Vector3(c.x + side * (dr.size.x * 0.5 + off), 0,
+		c.y + (t - 0.5) * dr.size.y)
+
+
+## Visual open-ground sampler that also keeps clear of the safehouse porch
+## and the player start (both known: props_v2 runs after _layout_safehouse_info).
+func _porch_safe_spot(margin := 2.0, keep_away := 8.0) -> Vector3:
+	for _i in 200:
+		var p := Vector3(_vrng.randf_range(-90, 90), 0,
+			_vrng.randf_range(-90, 90))
+		if _on_road(p, margin) or _point_in_lots(p, margin):
+			continue
+		if p.distance_to(player_start) < keep_away:
+			continue
+		if p.distance_to(safehouse_porch) < keep_away * 0.75:
+			continue
+		return p
+	return Vector3(road_ns_x + 14.0, 0, road_ew_z - 14.0)
+
+
 func _build_silhouettes() -> void:
 	# Distant skyline + treeline so the horizon isn't empty. Unshaded dark
 	# slabs outside the boundary; fog hazes them into the background.
@@ -2463,3 +2859,328 @@ func get_road_rects() -> Array[Rect2]:
 
 func get_gas_rect() -> Rect2:
 	return _gas_rect
+
+
+## ------------------------------------------------- v3 dressing / trim ----
+# Quality pass part 2 (2026-10-02): denser exterior dressing, per-building
+# trim, extra ground variation. ALL of these run at the very end of
+# build_world and draw randomness ONLY from _drng (seeded from
+# world_seed) — the layout (_rng), visual (_vrng), loot (_lrng) and chop
+# (_crng) streams are never touched, so layout/interior hashes and every
+# pre-existing placement are byte-identical to before.
+
+## One shared MultiMesh commit helper for the v3 scatter.
+func _add_dressing_mm(mesh: Mesh, xf: Array[Transform3D]) -> void:
+	if xf.is_empty():
+		return
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.mesh = mesh
+	mm.instance_count = xf.size()
+	for i in xf.size():
+		mm.set_instance_transform(i, xf[i])
+	var mmi := MultiMeshInstance3D.new()
+	mmi.multimesh = mm
+	add_child(mmi)
+
+
+## A point on a dirt-road rect (not the shoulder).
+func _dirt_on_spot() -> Vector3:
+	var dr := _dirt_rects[_drng.randi() % _dirt_rects.size()]
+	var c := dr.get_center()
+	var t := _drng.randf_range(-0.4, 0.4)
+	if dr.size.x > dr.size.y:
+		return Vector3(c.x + t * dr.size.x, 0,
+			c.y + _drng.randf_range(-1.0, 1.0))
+	return Vector3(c.x + _drng.randf_range(-1.0, 1.0), 0,
+		c.y + t * dr.size.y)
+
+
+## V3 set dressing: bus stop shelter, dumpsters behind commercial lots,
+## newspaper boxes, bottles/cans (one MultiMesh), fallen branches, extra
+## trash bags, dirt-road manhole covers.
+func _build_dressing_v3() -> void:
+	# Bus stop: shelter posts + roof + bench + sign pole at one curb.
+	var bp := _curb_spot(true)
+	if not _point_in_lots(bp, 1.5):
+		_bus_stop(bp)
+	# Dumpsters behind commercial buildings (deterministic per index).
+	for bi in buildings.size():
+		if _drng.randf() < 0.35:
+			_dumpster(buildings[bi] as Dictionary)
+	# Newspaper vending boxes on curb spots.
+	for _i in 3:
+		var np := _curb_spot(true)
+		if _point_in_lots(np, 0.5):
+			continue
+		_newspaper_box(np)
+	# Bottles/cans: small glass cylinders near curbs, one draw call.
+	var bmesh := CylinderMesh.new()
+	bmesh.top_radius = 0.045
+	bmesh.bottom_radius = 0.05
+	bmesh.height = 0.24
+	bmesh.radial_segments = 6
+	bmesh.material = _m_bottle
+	var bxf: Array[Transform3D] = []
+	var btries := 0
+	while bxf.size() < 26 and btries < 200:
+		btries += 1
+		var cp := _curb_spot(true)
+		var b := Basis(Vector3.UP, _drng.randf() * TAU)
+		var y := 0.12
+		if _drng.randf() < 0.6: # most are tipped over
+			b = b * Basis(Vector3.RIGHT, PI * 0.5 + _drng.randf_range(-0.2, 0.2))
+			y = 0.05
+		bxf.append(Transform3D(b, cp + Vector3(0, y, 0)))
+	_add_dressing_mm(bmesh, bxf)
+	# Fallen branches on open ground.
+	for _i in 8:
+		var fp := _open_spot_visual(1.0)
+		if fp.distance_to(player_start) < 6.0 \
+				or fp.distance_to(safehouse_porch) < 6.0:
+			continue
+		var br := _box(self, Vector3(_drng.randf_range(1.2, 2.4), 0.09, 0.11),
+			fp + Vector3(0, 0.06, 0), _m_branch, _drng.randf() * TAU)
+		br.rotation.z = _drng.randf_range(-0.06, 0.06)
+	# Tied trash bags on curbs.
+	for _i in 8:
+		var tp := _curb_spot(true)
+		if _point_in_lots(tp, 0.5):
+			continue
+		var bag := _sphere(self, _drng.randf_range(0.28, 0.42),
+			tp + Vector3(0, 0.22, 0), _m_trash)
+		bag.scale.y = 0.72
+	# Manhole covers on the dirt roads too.
+	if not _dirt_rects.is_empty():
+		var drain_mat := _std(Color(0.10, 0.10, 0.11), 0.7, 0.4)
+		for _i in 4:
+			var dp := _dirt_on_spot()
+			_cyl(self, 0.40, 0.40, 0.022, dp + Vector3(0, 0.004, 0), drain_mat)
+
+
+func _bus_stop(p: Vector3) -> void:
+	var root := Node3D.new()
+	root.position = p
+	root.rotation.y = _drng.randf() * TAU
+	add_child(root)
+	for px in [-1.6, 1.6]: # shelter posts
+		_box(root, Vector3(0.12, 2.4, 0.12), Vector3(px, 1.2, 0), _m_pole)
+	_box(root, Vector3(3.8, 0.10, 1.6), Vector3(0, 2.45, 0), _m_bench) # roof
+	_box(root, Vector3(3.8, 0.35, 0.06), Vector3(0, 2.24, -0.77), _m_sign) # back board
+	for bx in [-1.2, 0.0, 1.2]: # bench seat slats
+		_box(root, Vector3(0.9, 0.07, 0.45), Vector3(bx, 0.55, 0), _m_bench)
+	_box(root, Vector3(0.06, 2.2, 0.06), Vector3(2.4, 1.1, 0), _m_pole) # sign pole
+	_box(root, Vector3(0.55, 0.35, 0.04), Vector3(2.4, 2.0, 0), _m_sign) # sign
+	_solid(root, Vector3(3.9, 2.5, 1.7), Vector3(0, 1.25, 0))
+
+
+func _dumpster(bd: Dictionary) -> void:
+	var pos := bd["pos"] as Vector3
+	var w := float(bd["w"])
+	var d := float(bd["d"])
+	var face := float(bd["face"])
+	# Behind the building (opposite the door face), off to one side.
+	var side := 1.0 if _drng.randf() < 0.5 else -1.0
+	var p := pos + Vector3(side * (w * 0.5 + _drng.randf_range(2.0, 3.5)), 0,
+		-face * (d * 0.5 + _drng.randf_range(1.5, 2.5)))
+	if _on_road(p, 1.5) or _point_in_lots(p, 1.0):
+		return
+	var root := Node3D.new()
+	root.position = p
+	root.rotation.y = _drng.randf() * TAU
+	add_child(root)
+	_box(root, Vector3(2.2, 1.15, 1.2), Vector3(0, 0.62, 0), _m_dumpster) # body
+	_box(root, Vector3(2.24, 0.08, 1.24), Vector3(0, 1.24, 0), _m_dumpster) # lid
+	_box(root, Vector3(2.24, 0.10, 0.12), Vector3(0, 1.30, 0.56), _m_trash) # lid lip
+	for wx in [-0.85, 0.85]: # caster wheels
+		for wz in [-0.45, 0.45]:
+			_cyl(root, 0.09, 0.09, 0.12, Vector3(wx, 0.06, wz), _m_tire)
+	_solid(root, Vector3(2.3, 1.4, 1.3), Vector3(0, 0.7, 0))
+
+
+func _newspaper_box(p: Vector3) -> void:
+	var root := Node3D.new()
+	root.position = p
+	root.rotation.y = _drng.randf() * TAU
+	add_child(root)
+	_box(root, Vector3(0.55, 0.85, 0.45), Vector3(0, 0.55, 0), _m_newspaper)
+	_box(root, Vector3(0.50, 0.28, 0.03), Vector3(0, 0.75, 0.24), _m_paper) # window
+	_box(root, Vector3(0.59, 0.10, 0.49), Vector3(0, 1.02, 0), _m_newspaper) # cap
+
+
+## V3 house trim: gutters + downspouts on every house, window boxes and
+## door awnings on a seeded subset, side shutters where the facade missed
+## them. Deterministic per building index via _drng.
+func _build_house_trim_v2() -> void:
+	for hi in houses.size():
+		var hd := houses[hi] as Dictionary
+		var root := hd["root"] as Node3D
+		var w := float(hd["w"])
+		var d := float(hd["d"])
+		var face := float(hd["face"])
+		# Wall height: the roof mesh sits at y == wall top.
+		var roof_g := hd["roof"] as Node3D
+		var h := 3.2
+		if roof_g.get_child_count() > 0:
+			h = (roof_g.get_child(0) as Node3D).position.y
+		var shack := h < 3.0
+		# Gutter along the front eave + downspouts at both front corners.
+		_box(root, Vector3(w + 1.0, 0.12, 0.16),
+			Vector3(0, h + 0.02, face * (d * 0.5 + 0.52)), _m_downspout)
+		for cx in [-w * 0.5 + 0.15, w * 0.5 - 0.15]:
+			_box(root, Vector3(0.10, h, 0.10),
+				Vector3(cx, h * 0.5, face * (d * 0.5 + 0.55)), _m_downspout)
+			_box(root, Vector3(0.10, 0.14, 0.30),
+				Vector3(cx, 0.07, face * (d * 0.5 + 0.65)), _m_downspout) # foot
+		if shack:
+			continue # shacks stay rough: gutter only
+		# Window boxes with weeds under the front windows (seeded subset).
+		if _drng.randf() < 0.5:
+			for wx in [-w * 0.28, w * 0.28]:
+				_box(root, Vector3(1.3, 0.24, 0.34),
+					Vector3(wx, 0.78, face * (d * 0.5 + 0.28)), _m_wood)
+				for ti in 3:
+					_sphere(root, _drng.randf_range(0.10, 0.16),
+						Vector3(wx + float(ti - 1) * 0.36, 0.98,
+							face * (d * 0.5 + 0.28)),
+						_m_bush, true)
+		# Door awning over a seeded subset of doors.
+		if _drng.randf() < 0.42:
+			var aw := _box(root, Vector3(2.2, 0.07, 1.15),
+				Vector3(0, 2.72, face * (d * 0.5 + 0.62)), _m_awning)
+			aw.rotation.x = face * -0.28
+			_box(root, Vector3(2.2, 0.16, 0.07),
+				Vector3(0, 2.52, face * (d * 0.5 + 1.14)),
+				_m_awning_stripe) # valance
+			for ax in [-0.95, 0.95]: # angled support arms
+				var arm := _box(root, Vector3(0.06, 0.06, 1.0),
+					Vector3(ax, 2.45, face * (d * 0.5 + 0.55)), _m_pole)
+				arm.rotation.x = face * 0.5
+		# Side shutters where the facade missed them.
+		if _drng.randf() < 0.35:
+			for sx in [-1.0, 1.0]:
+				var wx2: float = float(sx) * (w * 0.5 + 0.19)
+				for sz in [-1.02, 1.02]:
+					_box(root, Vector3(0.06, 1.34, 0.52),
+						Vector3(wx2, 1.7, sz), _m_shutter)
+
+
+## V3 commercial trim: hanging blade signs, roof AC units, storefront
+## awnings, facade gutters. Deterministic per building index via _drng.
+## (Wall signs already exist in BuildingTypes — these are the
+## perpendicular blade signs that read from down the street.)
+func _build_commercial_trim_v2() -> void:
+	for bi in buildings.size():
+		var bd := buildings[bi] as Dictionary
+		var spec := _building_specs[bi] as Dictionary
+		var pos := bd["pos"] as Vector3
+		var w := float(bd["w"])
+		var d := float(bd["d"])
+		var h := float(spec["h"])
+		var face := float(bd["face"])
+		var kind := String(bd["kind"])
+		var root := Node3D.new()
+		root.position = pos
+		add_child(root)
+		var fz := face * (d * 0.5)
+		# Hanging blade sign: bracket arm from the facade, board hanging
+		# perpendicular. Not on the police station (kept official). Offset
+		# to the side so it never fights the central wall sign.
+		if _drng.randf() < 0.55 and kind != "police":
+			var side := 1.0 if _drng.randf() < 0.5 else -1.0
+			var sx := side * _drng.randf_range(w * 0.22, w * 0.40)
+			_box(root, Vector3(0.08, 0.08, 1.1),
+				Vector3(sx, h - 0.7, fz + face * 0.55), _m_pole) # arm
+			_box(root, Vector3(1.5, 0.65, 0.08),
+				Vector3(sx, h - 1.15, fz + face * 1.0), _m_sign) # board
+			_box(root, Vector3(0.05, 0.28, 0.05),
+				Vector3(sx - 0.6, h - 0.82, fz + face * 1.0), _m_pole) # chain L
+			_box(root, Vector3(0.05, 0.28, 0.05),
+				Vector3(sx + 0.6, h - 0.82, fz + face * 1.0), _m_pole) # chain R
+		# Storefront awning over the door (retail kinds).
+		if _drng.randf() < 0.5 and (kind == "grocery" or kind == "corner"):
+			var aw := _box(root, Vector3(3.0, 0.07, 1.3),
+				Vector3(0, 2.85, fz + face * 0.75), _m_awning)
+			aw.rotation.x = face * -0.30
+			_box(root, Vector3(3.0, 0.18, 0.07),
+				Vector3(0, 2.60, fz + face * 1.32), _m_awning_stripe)
+		# Roof AC unit on the front parapet edge.
+		if _drng.randf() < 0.6:
+			var ax := _drng.randf_range(-w * 0.35, w * 0.35)
+			_box(root, Vector3(0.9, 0.7, 0.9),
+				Vector3(ax, h + 0.35, fz - face * 0.8), _m_ac)
+			_box(root, Vector3(0.6, 0.12, 0.6),
+				Vector3(ax, h + 0.76, fz - face * 0.8), _m_ac_dark)
+		# Gutter + downspouts along the facade.
+		_box(root, Vector3(w + 0.4, 0.12, 0.16),
+			Vector3(0, h + 0.02, fz + face * 0.10), _m_downspout)
+		for cx in [-w * 0.5 + 0.2, w * 0.5 - 0.2]:
+			_box(root, Vector3(0.10, h, 0.10),
+				Vector3(cx, h * 0.5, fz + face * 0.16), _m_downspout)
+
+
+## V3 ground detail: more patch variety on the same patch materials (the
+## field QA counts them), plus oil stains, leaf piles, grass tufts
+## breaking through pavement, thin sidewalk cracks.
+func _build_ground_detail_v2() -> void:
+	# Extra patches: the patch materials/counts keep growing (field QA
+	# counts _m_patch_dirt/_m_patch_dark/_m_patch_ash >= 30).
+	var mats := [_m_patch_dirt, _m_patch_dark, _m_patch_ash]
+	var placed := 0
+	var tries := 0
+	while placed < 18 and tries < 160:
+		tries += 1
+		var p := Vector3(_drng.randf_range(-88, 88), 0,
+			_drng.randf_range(-88, 88))
+		if _on_road(p, 1.5) or _point_in_lots(p, 1.0):
+			continue
+		if p.distance_to(player_start) < 5.0 \
+				or p.distance_to(safehouse_porch) < 5.0:
+			continue
+		var s := _drng.randf_range(1.2, 3.0)
+		_box(self, Vector3(s, 0.012, s * _drng.randf_range(0.5, 1.0)),
+			Vector3(p.x, 0.018, p.z), mats[_drng.randi() % 3],
+			_drng.randf_range(0.0, TAU))
+		placed += 1
+	# Oil stains on the asphalt.
+	for _i in 10:
+		var on_ew := _drng.randf() < 0.5
+		var px := _drng.randf_range(-70, 70)
+		var p2 := Vector3(px, 0, road_ew_z + _drng.randf_range(-3.0, 3.0)) \
+			if on_ew else Vector3(road_ns_x + _drng.randf_range(-3.0, 3.0), 0, px)
+		var s2 := _drng.randf_range(0.6, 1.3)
+		_box(self, Vector3(s2, 0.012, s2 * _drng.randf_range(0.6, 1.0)),
+			Vector3(p2.x, 0.006, p2.z), _m_oil, _drng.randf() * TAU)
+	# Leaf piles against curbs.
+	for _i in 5:
+		var lp := _curb_spot(true)
+		for _k in 2:
+			var r := _drng.randf_range(0.14, 0.26)
+			_sphere(self, r, lp + Vector3(_drng.randf_range(-0.4, 0.4),
+				r * 0.4, _drng.randf_range(-0.4, 0.4)), _m_leafpile, true)
+	# Grass tufts breaking through pavement: small tufts along curb edges.
+	var tuft := CylinderMesh.new()
+	tuft.top_radius = 0.02
+	tuft.bottom_radius = 0.07
+	tuft.height = 0.35
+	tuft.radial_segments = 5
+	tuft.material = _m_tuft
+	var txf: Array[Transform3D] = []
+	var ttries := 0
+	while txf.size() < 40 and ttries < 300:
+		ttries += 1
+		var tp := _curb_spot(true)
+		var s3 := _drng.randf_range(0.7, 1.3)
+		txf.append(Transform3D(
+			Basis(Vector3.UP, _drng.randf() * TAU).scaled(Vector3(s3, s3, s3)),
+			tp + Vector3(0, 0.15, 0)))
+	_add_dressing_mm(tuft, txf)
+	# Thin cracks: dark slivers on the sidewalks.
+	for _i in 14:
+		var on_ew2 := _drng.randf() < 0.5
+		var qx := _drng.randf_range(-60, 60)
+		var qp := Vector3(qx, 0, road_ew_z + (5.0 if _drng.randf() < 0.5 else -5.0)) \
+			if on_ew2 else Vector3(road_ns_x + (6.0 if _drng.randf() < 0.5 else -6.0), 0, qx)
+		_box(self, Vector3(0.08, 0.012, _drng.randf_range(0.8, 2.0)),
+			Vector3(qp.x, 0.008, qp.z), _m_asphalt_crack,
+			_drng.randf_range(-0.3, 0.3))

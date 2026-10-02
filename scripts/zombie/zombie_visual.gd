@@ -23,6 +23,11 @@ var _phase := 0.0
 var _target_yaw := 0.0
 var _lunge_t := 0.0
 var _head_base_y := 0.0
+var _is_brute := false # set_brute(): heavier stomp in the shamble
+
+# Per-instance visual variant key (QA: variety actually varies). Built in
+# _build() from the seeded picks: shirt/pants/skin/wounds/shorts/stump/hair.
+var _v_key := ""
 
 # --- Hit feedback (combat): flinch overlay + white/red damage flash. ---
 var _flinch_e := 99.0 # elapsed since flinch start; > FLINCH_TIME = inactive
@@ -101,12 +106,23 @@ static func shared_mats() -> Dictionary:
 		_mats["shirt"] = _mk(Color(0.30, 0.28, 0.32), 0.95) # torn dark shirt
 		_mats["shirt_b"] = _mk(Color(0.36, 0.26, 0.20), 0.95) # variant: filthy brown
 		_mats["shirt_c"] = _mk(Color(0.22, 0.26, 0.30), 0.95) # variant: dead blue
-		_mats["shirt_dark"] = _mk(Color(0.18, 0.17, 0.20), 0.95)
+		_mats["shirt_d"] = _mk(Color(0.32, 0.34, 0.20), 0.95) # variant: sickly olive
+		_mats["shirt_e"] = _mk(Color(0.42, 0.20, 0.18), 0.95) # variant: faded crimson
+		_mats["shirt_f"] = _mk(Color(0.20, 0.32, 0.32), 0.95) # variant: dirty teal
+		_mats["shirt_dark"] = _mk(Color(0.14, 0.13, 0.16), 1.0)
 		_mats["pants"] = _mk(Color(0.25, 0.24, 0.28), 0.95) # ripped trousers
 		_mats["pants_b"] = _mk(Color(0.30, 0.28, 0.20), 0.95) # variant: khaki
+		_mats["pants_c"] = _mk(Color(0.18, 0.22, 0.32), 0.95) # variant: dark denim
+		_mats["pants_d"] = _mk(Color(0.12, 0.12, 0.14), 0.95) # variant: torn black
+		_mats["skin_b"] = _mk(Color(0.55, 0.52, 0.38), 0.85) # sallow yellow-grey
+		_mats["skin_c"] = _mk(Color(0.45, 0.45, 0.44), 0.9) # ashen pale
 		_mats["wound"] = _mk(Color(0.32, 0.10, 0.08), 1.0) # dark wounds
-		_mats["blood"] = _mk(Color(0.22, 0.05, 0.05), 0.6) # dried blood
-		_mats["bone"] = _mk(Color(0.78, 0.72, 0.58), 0.7) # exposed bone
+		var bloodm := _mk(Color(0.22, 0.05, 0.05), 0.45) # dried blood, wet sheen
+		bloodm.metallic = 0.1 # V3: faint specular so wounds glint
+		_mats["blood"] = bloodm
+		var bonem := _mk(Color(0.78, 0.72, 0.58), 0.7) # exposed bone
+		bonem.metallic = 0.05 # V3: faint mineral sheen
+		_mats["bone"] = bonem
 		_mats["hair"] = _mk(Color(0.16, 0.13, 0.10), 1.0) # matted hair
 		var eye := StandardMaterial3D.new()
 		eye.albedo_color = Color(0.85, 0.82, 0.55)
@@ -140,7 +156,16 @@ func _ready() -> void:
 ## Brute variant look: riot-gear remnant. Bulkier body, tactical vest,
 ## shoulder pads, cracked riot helmet. Called by ZombieAI.make_brute().
 func set_brute() -> void:
+	if _is_brute:
+		return # idempotent: gear meshes must never stack
+	_is_brute = true
 	_body.scale = Vector3(1.32, 1.10, 1.22)
+	# Thicker limbs: the bulk has to read in the silhouette, not just the
+	# torso. Arm/leg pivots scale their children (cheap, no new meshes).
+	_arm_l.scale = Vector3(1.35, 1.0, 1.35)
+	_arm_r.scale = Vector3(1.35, 1.0, 1.35)
+	_leg_l.scale = Vector3(1.25, 1.0, 1.25)
+	_leg_r.scale = Vector3(1.25, 1.0, 1.25)
 	var M := shared_mats()
 	var gear: Material = M["pants"] # dark charcoal
 	# Tactical vest over the torso.
@@ -161,6 +186,37 @@ func set_brute() -> void:
 
 func set_target_yaw(y: float) -> void:
 	_target_yaw = y
+
+
+## Directed head snap: the zombie visibly reacts to a noise, turning its
+## head toward the stimulus before it starts moving. Reuses the head-snap
+## twitch channel (differential offsets, zero residue) with a forced
+## direction instead of a random one.
+func notice(dir_sign: float) -> void:
+	if _ragdolled:
+		return
+	_twitch_kind = 1
+	_twitch_dur = 0.45
+	_twitch_el = 0.0
+	_twitch_dir = dir_sign if dir_sign != 0.0 else 1.0
+	_twitch_prev = 0.0
+	_twitch_t = randf_range(2.5, 6.5) # don't chain another twitch right after
+
+
+## QA: the per-instance visual variant key (shirt/pants/skin/wounds/etc).
+func variant_key() -> String:
+	return _v_key
+
+
+## QA: live pose snapshot for animation checks.
+func debug_pose() -> Dictionary:
+	return {
+		"phase": _phase,
+		"arm_l_x": _arm_l.rotation.x,
+		"arm_r_x": _arm_r.rotation.x,
+		"body_y": _body.position.y,
+		"is_brute": _is_brute,
+	}
 
 
 func play_lunge() -> void:
@@ -249,6 +305,7 @@ func tick(delta: float, speed: float, moving: bool) -> void:
 			_lunge_from = {
 				"rx": _body.rotation.x, "rz": _body.rotation.z,
 				"ry": _body.rotation.y, "px": _body.position.x,
+				"pz": _body.position.z, "py": _body.position.y,
 				"leg_l": _leg_l.rotation.x, "leg_r": _leg_r.rotation.x,
 				"arm_l": _arm_l.rotation.x, "arm_r": _arm_r.rotation.x,
 				"head_x": _head.rotation.x,
@@ -269,6 +326,8 @@ func tick(delta: float, speed: float, moving: bool) -> void:
 		_body.rotation.z = lerpf(_lunge_from["rz"], _body.rotation.z, w)
 		_body.rotation.y = lerpf(_lunge_from["ry"], _body.rotation.y, w)
 		_body.position.x = lerpf(_lunge_from["px"], _body.position.x, w)
+		_body.position.z = lerpf(_lunge_from["pz"], _body.position.z, w)
+		_body.position.y = lerpf(_lunge_from["py"], _body.position.y, w)
 		_leg_l.rotation.x = lerpf(_lunge_from["leg_l"], _leg_l.rotation.x, w)
 		_leg_r.rotation.x = lerpf(_lunge_from["leg_r"], _leg_r.rotation.x, w)
 		_arm_l.rotation.x = lerpf(_lunge_from["arm_l"], _arm_l.rotation.x, w)
@@ -333,11 +392,13 @@ func _base_prev_val(ch: String, cur: float) -> float:
 	return float(_base_prev.get(ch, cur))
 
 
-## Live base-pose values for the flinch channels. The base pose never
-## writes body.position.z, so it reads as its 0.0 rest value.
+## Live base-pose values for the flinch channels. The base pose writes
+## body.position.z (shamble lurch), so it reads live — the flinch overlay
+## never touches z, it just must not reset it.
 func _flinch_base() -> Dictionary:
 	return {
-		"rx": _body.rotation.x, "pz": 0.0,
+		"rx": _body.rotation.x, "pz": _body.position.z,
+		"py": _body.position.y,
 		"head_x": _head.rotation.x,
 		"arm_l": _arm_l.rotation.x, "arm_r": _arm_r.rotation.x,
 		"arml_z": _arm_l.rotation.z, "armr_z": _arm_r.rotation.z,
@@ -418,22 +479,29 @@ func _shamble(delta: float, speed: float) -> void:
 	# its swing, never lifting like the left.
 	_leg_r.rotation.z = 0.05 + s2 * 0.03
 	# Dangling arms: hang forward-down, lag behind the body sway, swinging
-	# out of phase with each other (left leads, right trails).
+	# out of phase with each other (left leads, right trails). Brutes
+	# swing wider — the bulk has to read in motion too.
+	var sway := 1.3 if _is_brute else 1.0
 	var lag := sin(_phase - 0.9)
-	_arm_l.rotation.x = -0.55 + lag * 0.16
-	_arm_r.rotation.x = -0.75 + sin(_phase * 0.5 + 0.4) * 0.20
-	_arm_l.rotation.z = 0.10 + s * 0.06
-	_arm_r.rotation.z = -0.14 + s2 * 0.07
+	_arm_l.rotation.x = -0.55 + lag * 0.16 * sway
+	_arm_r.rotation.x = -0.75 + sin(_phase * 0.5 + 0.4) * 0.20 * sway
+	_arm_l.rotation.z = 0.10 + s * 0.06 * sway
+	_arm_r.rotation.z = -0.14 + s2 * 0.07 * sway
 	# Heavy hunch + lateral WEIGHT SHIFT (hips rock side to side as the
 	# weight transfers) + torso twist against the stride + head loll.
 	# NOTE: keep the COMBINED lateral (body.z + head.z) modest — the head
 	# sits 1.5m up, so large angles read as a detached head in stills.
+	# Upgrade: a forward LURCH synced to the stride (the step lands with
+	# weight) and a heavier vertical bob for brutes (stomp). Bob stays
+	# phase-locked so it never fights the leg motion.
+	var stomp := 1.7 if _is_brute else 1.0
 	_body.rotation.x = 0.34 + sin(_phase) * 0.02
 	_body.rotation.z = sin(_phase * 0.5) * 0.08
 	_body.rotation.y = sin(_phase * 0.5 + 0.6) * 0.05 # twist vs hips
 	_body.position.x = sin(_phase * 0.5) * 0.04 # weight shift
-	_body.position.y = absf(cos(_phase)) * 0.035
-	_head.position.y = _head_base_y - absf(cos(_phase)) * 0.015
+	_body.position.y = absf(cos(_phase)) * 0.035 * stomp
+	_body.position.z = -absf(sin(_phase)) * 0.035 # forward lurch on the step
+	_head.position.y = _head_base_y - absf(cos(_phase)) * 0.015 * stomp
 	_head.rotation.z = sin(_phase * 0.5 + 0.7) * 0.20
 	_head.rotation.x = 0.18 + sin(_phase * 0.33) * 0.07
 	_apply_twitch(delta) # keep advancing: never freeze a twitch mid-flight
@@ -450,6 +518,8 @@ func _idle_sway(delta: float) -> void:
 	_arm_l.rotation.x = lerpf(_base_prev_val("arm_l", _arm_l.rotation.x), -0.55, k)
 	_arm_r.rotation.x = lerpf(_base_prev_val("arm_r", _arm_r.rotation.x), -0.75, k)
 	_body.rotation.x = lerpf(_base_prev_val("rx", _body.rotation.x), 0.34, k)
+	_body.position.y = lerpf(_base_prev_val("py", _body.position.y), 0.0, k)
+	_body.position.z = lerpf(_base_prev_val("pz", _body.position.z), 0.0, k)
 	_body.rotation.z = sin(_phase) * 0.035
 	_head.rotation.z = sin(_phase * 0.7) * 0.12
 	_head.rotation.x = 0.18
@@ -503,8 +573,8 @@ func _lunge(delta: float) -> void:
 	var t := 1.0 - _lunge_t / 0.38 # 0 -> 1
 	var rest_l := -0.55
 	var rest_r := -0.75
-	var wound_l := -1.55 # coiled high
-	var wound_r := -1.75
+	var wound_l := -1.70 # coiled high: a bigger, clearer telegraph
+	var wound_r := -1.90
 	var struck_l := 0.35 # raked down past rest
 	var struck_r := 0.25
 	var ax_l := rest_l
@@ -619,17 +689,26 @@ func _frustum(parent: Node3D, top: Vector2, bot: Vector2, h: float,
 
 func _build() -> void:
 	var M := shared_mats()
-	# Per-instance variety: pick a shirt/pants set and a body type from the
-	# shared palette — zero extra materials, every zombie reads different.
-	var shirt: Material = M["shirt"]
-	var pants: Material = M["pants"]
-	var roll := randf()
-	if roll < 0.33:
-		shirt = M["shirt_b"]
-	elif roll < 0.66:
-		shirt = M["shirt_c"]
-	if randf() < 0.4:
-		pants = M["pants_b"]
+	# Per-instance variety: seeded picks across an expanded wardrobe —
+	# zero extra materials, every zombie reads different. Same global-RNG
+	# convention the file already uses (visual-only draws; layout hashes
+	# untouched, seed_qa green).
+	var shirts: Array = [M["shirt"], M["shirt_b"], M["shirt_c"],
+		M["shirt_d"], M["shirt_e"], M["shirt_f"]]
+	var pants_arr: Array = [M["pants"], M["pants_b"], M["pants_c"], M["pants_d"]]
+	var skins: Array = [M["skin"], M["skin_b"], M["skin_c"]]
+	var si := randi_range(0, shirts.size() - 1)
+	var pi := randi_range(0, pants_arr.size() - 1)
+	var ki := randi_range(0, skins.size() - 1)
+	var shirt: Material = shirts[si]
+	var pants: Material = pants_arr[pi]
+	var skin: Material = skins[ki]
+	var wounds := randi_range(0, 2) # 0 chest cavity, 1 neck+arm, 2 gut+thigh
+	var shorts := randf() < 0.25 # torn shorts: bare legs, no trousers
+	var stump := randf() < 0.15 # right forearm lost: bloody stump
+	var hair_v := randi_range(0, 2) # 0 matted, 1 patchy, 2 bald
+	_v_key = "s%dp%dk%dw%d%s%sh%d" % [si, pi, ki, wounds,
+		"o" if shorts else "", "t" if stump else "", hair_v]
 	_body = Node3D.new()
 	_body.rotation.x = 0.34 # permanent hunch
 	add_child(_body)
@@ -640,44 +719,60 @@ func _build() -> void:
 		_body.scale = Vector3(1.16, 0.94, 1.08) # stocky: wide, short
 	else:
 		_body.scale = Vector3(0.84, 1.02, 0.84) # gaunt: skeletal
-	_build_legs(M, pants)
-	_build_torso(M, shirt)
-	_build_arms(M, shirt)
-	_build_head(M)
+	_build_legs(M, pants, skin, shorts)
+	_build_torso(M, shirt, wounds)
+	_build_arms(M, shirt, skin, stump)
+	_build_head(M, skin, hair_v)
 
 
-func _build_legs(M: Dictionary, pants: Material) -> void:
-	# Tapered thighs, ripped trousers; one shin stripped to the bone.
+func _build_legs(M: Dictionary, pants: Material, skin: Material,
+		shorts: bool) -> void:
+	# Tapered thighs; trousers or torn shorts. One shin is always stripped
+	# to the bone (iconic); with shorts both legs go bare.
 	for side in [-1.0, 1.0]:
 		var leg := Node3D.new()
 		leg.position = Vector3(0.11 * side, 0.92, 0.0)
 		_body.add_child(leg)
 		_frustum(leg, Vector2(0.19, 0.21), Vector2(0.14, 0.16), 0.38,
 			Vector3(0, -0.19, 0), pants)
-		# Torn cuff flap.
-		_box(leg, Vector3(0.05, 0.14, 0.02), Vector3(0.08 * side, -0.36, -0.09),
-			pants, Vector3(0.5, 0, 0.3 * side))
+		if shorts:
+			# Torn shorts hem instead of a full trouser leg.
+			_box(leg, Vector3(0.20, 0.10, 0.02), Vector3(0, -0.30, -0.10),
+				pants, Vector3(0.4, 0, 0.2 * side))
+		else:
+			# Torn cuff flap.
+			_box(leg, Vector3(0.05, 0.14, 0.02),
+				Vector3(0.08 * side, -0.36, -0.09), pants,
+				Vector3(0.5, 0, 0.3 * side))
 		var shin := Node3D.new()
 		shin.position = Vector3(0, -0.38, 0)
 		leg.add_child(shin)
 		# Knee joint block.
-		_box(shin, Vector3(0.16, 0.12, 0.17), Vector3(0, -0.02, 0), M["skin_dark"])
+		_box(shin, Vector3(0.16, 0.12, 0.17), Vector3(0, -0.02, 0),
+			M["skin_dark"])
 		if side < 0.0:
-			# Left: flesh shin with a deep gash, shoe intact.
+			# Left: flesh shin with a deep gash, shoe intact — or bare
+			# with shorts (shoe lost, bloody foot).
 			_frustum(shin, Vector2(0.14, 0.16), Vector2(0.10, 0.12), 0.32,
-				Vector3(0, -0.20, 0), pants)
-			_box(shin, Vector3(0.09, 0.16, 0.02), Vector3(0.02, -0.20, -0.075),
-				M["wound"], Vector3(0.1, 0, 0.15)) # gash
-			_box(shin, Vector3(0.16, 0.10, 0.28), Vector3(0, -0.40, -0.04),
-				M["shirt_dark"]) # shoe
+				Vector3(0, -0.20, 0), skin)
+			_box(shin, Vector3(0.09, 0.16, 0.02),
+				Vector3(0.02, -0.20, -0.075), M["wound"],
+				Vector3(0.1, 0, 0.15)) # gash
+			if shorts:
+				_frustum(shin, Vector2(0.11, 0.12), Vector2(0.13, 0.22), 0.09,
+					Vector3(0, -0.40, -0.03), M["blood"]) # mangled foot
+			else:
+				_box(shin, Vector3(0.16, 0.10, 0.28),
+					Vector3(0, -0.40, -0.04), M["shirt_dark"]) # shoe
 			_leg_l = leg
 			_shin_l = shin
 		else:
 			# Right: trousers torn away — bare tibia, bloody foot, no shoe.
 			_box(shin, Vector3(0.055, 0.30, 0.055), Vector3(0.015, -0.21, 0),
 				M["bone"], Vector3(0.06, 0, 0.05)) # tibia
-			_box(shin, Vector3(0.045, 0.28, 0.045), Vector3(-0.035, -0.21, 0.01),
-				M["bone"], Vector3(-0.05, 0, -0.06)) # fibula
+			_box(shin, Vector3(0.045, 0.28, 0.045),
+				Vector3(-0.035, -0.21, 0.01), M["bone"],
+				Vector3(-0.05, 0, -0.06)) # fibula
 			_box(shin, Vector3(0.10, 0.10, 0.13), Vector3(0, -0.06, 0),
 				M["wound"]) # flesh remnant at knee
 			_frustum(shin, Vector2(0.11, 0.12), Vector2(0.13, 0.22), 0.09,
@@ -686,21 +781,45 @@ func _build_legs(M: Dictionary, pants: Material) -> void:
 			_shin_r = shin
 
 
-func _build_torso(M: Dictionary, shirt: Material) -> void:
-	# Tapered torso, ripped open at the chest: ribs + bite wound.
+func _build_torso(M: Dictionary, shirt: Material, wounds: int) -> void:
+	# Tapered torso, torn shirt; wounds vary per instance (variant 0 keeps
+	# the classic ripped-open chest).
 	_frustum(_body, Vector2(0.44, 0.30), Vector2(0.36, 0.26), 0.48,
 		Vector3(0, 1.16, 0.02), shirt)
-	# Torn-open chest: dark cavity, rib slivers, bite wound.
-	_box(_body, Vector3(0.22, 0.24, 0.03), Vector3(-0.05, 1.14, -0.115), M["wound"])
-	for i in 2:
-		_box(_body, Vector3(0.16 - 0.02 * i, 0.025, 0.02),
-			Vector3(-0.05, 1.18 - 0.07 * i, -0.128), M["bone"],
-			Vector3(0, 0, 0.12 * (i - 0.5))) # exposed ribs
-	_box(_body, Vector3(0.13, 0.11, 0.02), Vector3(-0.05, 1.06, -0.128),
-		M["blood"]) # bite wound
-	# Blood streak down the shirt.
-	_box(_body, Vector3(0.07, 0.22, 0.02), Vector3(0.08, 1.02, -0.125),
-		M["blood"])
+	match wounds:
+		0:
+			# Torn-open chest: dark cavity, rib slivers, bite wound.
+			_box(_body, Vector3(0.22, 0.24, 0.03),
+				Vector3(-0.05, 1.14, -0.115), M["wound"])
+			for i in 2:
+				_box(_body, Vector3(0.16 - 0.02 * i, 0.025, 0.02),
+					Vector3(-0.05, 1.18 - 0.07 * i, -0.128), M["bone"],
+					Vector3(0, 0, 0.12 * (i - 0.5))) # exposed ribs
+			_box(_body, Vector3(0.13, 0.11, 0.02),
+				Vector3(-0.05, 1.06, -0.128), M["blood"]) # bite wound
+			# Blood streak down the shirt.
+			_box(_body, Vector3(0.07, 0.22, 0.02),
+				Vector3(0.08, 1.02, -0.125), M["blood"])
+		1:
+			# Neck gash + clawed shoulder.
+			_box(_body, Vector3(0.16, 0.07, 0.03),
+				Vector3(0.04, 1.36, -0.10), M["wound"],
+				Vector3(0, 0, 0.35)) # throat tear
+			_box(_body, Vector3(0.10, 0.05, 0.02),
+				Vector3(0.10, 1.32, -0.115), M["blood"],
+				Vector3(0, 0, -0.2))
+			for i in 3: # claw marks across the shoulder
+				_box(_body, Vector3(0.16, 0.022, 0.015),
+					Vector3(-0.12, 1.30 - 0.045 * i, -0.105), M["wound"],
+					Vector3(0, 0, 0.5))
+		_:
+			# Gut wound low on the torso, blood-soaked hem.
+			_box(_body, Vector3(0.18, 0.16, 0.03),
+				Vector3(0.03, 0.98, -0.115), M["wound"]) # torn belly
+			_box(_body, Vector3(0.10, 0.08, 0.035),
+				Vector3(0.03, 0.98, -0.11), M["blood"])
+			_box(_body, Vector3(0.20, 0.10, 0.02),
+				Vector3(-0.02, 0.90, -0.12), M["blood"]) # soaked hem
 	# Hanging cloth strips off the ripped hem — they sway with the shamble
 	# via the body's rotation (rigid, cheap, reads as motion).
 	for i in 2:
@@ -714,8 +833,10 @@ func _build_torso(M: Dictionary, shirt: Material) -> void:
 		M["shirt_dark"], Vector3(0, 0, 0.25))
 
 
-func _build_arms(M: Dictionary, shirt: Material) -> void:
+func _build_arms(M: Dictionary, shirt: Material, skin: Material,
+		stump: bool) -> void:
 	# Dangle forward-down; one forearm stripped to the bone, torn sleeves.
+	# Some lose the right forearm entirely (bloody stump).
 	for side in [-1.0, 1.0]:
 		var arm := Node3D.new()
 		arm.position = Vector3(0.26 * side, 1.34, 0.0)
@@ -729,12 +850,21 @@ func _build_arms(M: Dictionary, shirt: Material) -> void:
 		if side < 0.0:
 			# Left: bare forearm with a wound, claw hand.
 			_frustum(arm, Vector2(0.11, 0.12), Vector2(0.08, 0.09), 0.24,
-				Vector3(0, -0.38, 0), M["skin"])
+				Vector3(0, -0.38, 0), skin)
 			_box(arm, Vector3(0.10, 0.09, 0.02), Vector3(0, -0.36, -0.06),
 				M["wound"])
 			_frustum(arm, Vector2(0.09, 0.10), Vector2(0.06, 0.11), 0.10,
 				Vector3(0, -0.54, -0.01), M["skin_dark"]) # claw hand
 			_arm_l = arm
+		elif stump:
+			# Right forearm lost: ragged stump, blood-capped.
+			_frustum(arm, Vector2(0.11, 0.12), Vector2(0.09, 0.10), 0.12,
+				Vector3(0, -0.32, 0), skin)
+			_box(arm, Vector3(0.10, 0.07, 0.10), Vector3(0, -0.40, 0),
+				M["blood"]) # stump cap
+			_box(arm, Vector3(0.03, 0.06, 0.03), Vector3(0.02, -0.38, 0),
+				M["bone"], Vector3(0.2, 0, 0)) # bone shard
+			_arm_r = arm
 		else:
 			# Right: flesh torn away — radius + ulna, one dangling finger bone.
 			_box(arm, Vector3(0.04, 0.22, 0.04), Vector3(0.02, -0.38, 0),
@@ -748,15 +878,16 @@ func _build_arms(M: Dictionary, shirt: Material) -> void:
 			_arm_r = arm
 
 
-func _build_head(M: Dictionary) -> void:
+func _build_head(M: Dictionary, skin: Material, hair_v: int) -> void:
 	# Defined skull: tapered cranium (wide brow, narrow jaw), brow ridge,
 	# cheek planes, sunken sockets, exposed teeth under the mouth gash.
+	# Skin tone varies per instance; hair: 0 matted, 1 patchy, 2 bald.
 	_head = Node3D.new()
 	_head.position = Vector3(0, 1.50, -0.10)
 	_head.rotation.x = 0.18
 	_body.add_child(_head)
 	_frustum(_head, Vector2(0.24, 0.25), Vector2(0.17, 0.19), 0.26,
-		Vector3(0, 0.01, 0), M["skin"]) # tapered skull
+		Vector3(0, 0.01, 0), skin) # tapered skull
 	# Brow ridge + sunken eye sockets.
 	_box(_head, Vector3(0.20, 0.045, 0.05), Vector3(0, 0.055, -0.105),
 		M["skin_dark"], Vector3(-0.15, 0, 0))
@@ -767,7 +898,7 @@ func _build_head(M: Dictionary) -> void:
 			Vector3(0.058 * side, 0.005, -0.115), M["eye"])
 		# Cheek planes: angled slabs under the sockets.
 		_box(_head, Vector3(0.07, 0.05, 0.04),
-			Vector3(0.085 * side, -0.055, -0.075), M["skin"],
+			Vector3(0.085 * side, -0.055, -0.075), skin,
 			Vector3(0.3, 0.35 * side, 0))
 	# Nose: broken wedge, one nostril dark.
 	_frustum(_head, Vector2(0.035, 0.02), Vector2(0.05, 0.06), 0.09,
@@ -784,9 +915,20 @@ func _build_head(M: Dictionary) -> void:
 		M["wound"], Vector3(0, 0, 0.4))
 	_box(_head, Vector3(0.06, 0.05, 0.035), Vector3(0.07, 0.10, 0.015),
 		M["bone"], Vector3(0, 0, 0.4)) # cracked skull
-	# Matted hair: top cap, back mass, one clump over the forehead.
-	_frustum(_head, Vector2(0.25, 0.26), Vector2(0.26, 0.27), 0.10,
-		Vector3(0, 0.165, 0.01), M["hair"])
-	_box(_head, Vector3(0.24, 0.18, 0.10), Vector3(0, 0.07, 0.13), M["hair"])
-	_box(_head, Vector3(0.06, 0.10, 0.05), Vector3(-0.05, 0.14, -0.09),
-		M["hair"], Vector3(-0.3, 0, 0.2)) # clump over forehead
+	if hair_v == 0:
+		# Matted hair: top cap, back mass, one clump over the forehead.
+		_frustum(_head, Vector2(0.25, 0.26), Vector2(0.26, 0.27), 0.10,
+			Vector3(0, 0.165, 0.01), M["hair"])
+		_box(_head, Vector3(0.24, 0.18, 0.10), Vector3(0, 0.07, 0.13), M["hair"])
+		_box(_head, Vector3(0.06, 0.10, 0.05), Vector3(-0.05, 0.14, -0.09),
+			M["hair"], Vector3(-0.3, 0, 0.2)) # clump over forehead
+	elif hair_v == 1:
+		# Patchy: thin cap + one side clump, scalp showing through.
+		_frustum(_head, Vector2(0.24, 0.25), Vector2(0.25, 0.26), 0.06,
+			Vector3(0, 0.16, 0.01), M["hair"])
+		_box(_head, Vector3(0.08, 0.12, 0.06), Vector3(0.09, 0.10, 0.05),
+			M["hair"], Vector3(0, 0, -0.3))
+	else:
+		# Bald: bare scalp with a cracked plate.
+		_box(_head, Vector3(0.10, 0.04, 0.08), Vector3(-0.04, 0.15, 0.0),
+			M["wound"], Vector3(0, 0, 0.2))

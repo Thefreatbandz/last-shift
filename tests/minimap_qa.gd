@@ -54,7 +54,7 @@ func _phase_a() -> void:
 	_ok = _check("seed_matches", int(_mmap.get("seed")) == SEED_A, _ok)
 	_ok = _check("houses_tracked", _mmap.houses().size() >= 7, _ok)
 	_ok = _check("safehouse_idx", _mmap.safehouse_index() >= 0, _ok)
-	_ok = _check("roads_two", _mmap.road_rects().size() == 2, _ok)
+	_ok = _check("roads_four", _mmap.road_rects().size() == 4, _ok)
 	_ok = _check("fog_revealed_start", _mmap.revealed_count() > 0, _ok)
 	var pp: Vector2 = _mmap.player_pos()
 	var gp: Vector3 = _main.player.global_position

@@ -35,11 +35,11 @@ func _apply_layout() -> void:
 		offset_right = 0.0
 		offset_bottom = 0.0
 	else:
-		set_anchors_preset(Control.PRESET_TOP_RIGHT)
-		offset_left = -160.0
-		offset_top = 76.0
-		offset_right = -16.0
-		offset_bottom = 220.0
+		set_anchors_preset(Control.PRESET_TOP_LEFT)
+		offset_left = 16.0
+		offset_top = 64.0
+		offset_right = 160.0
+		offset_bottom = 208.0
 
 
 func _on_model_updated() -> void:

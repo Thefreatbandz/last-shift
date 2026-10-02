@@ -17,6 +17,7 @@ var _rs: Node # RunState autoload (fetched dynamically; not visible at compile)
 var _main: Node
 
 const CURATED_SPOTS := 18 # seeded outdoor loot variety (NeighborhoodBuilder.OUTDOOR_LOOT_COUNT)
+const OFFICER_CORPSE := 1 # dead officer with a pistol outside the police station
 
 
 func _process(_delta: float) -> bool:
@@ -100,10 +101,11 @@ func _check_run(tag: String, expect_seed: int) -> void:
 		_ok = _check("seed_set_" + tag, int(_rs.get("world_seed")) == expect_seed, _ok)
 	# Indoor loot per house: 1 corner container + 1 bedroom duffel (every
 	# non-safehouse house) + 1 back-corner junk crate (+ curated street
-	# spots + seeded commercial-building containers).
+	# spots + seeded commercial-building containers + the dead officer
+	# outside the police station, gun-findability 2026-10-02).
 	_ok = _check("loot_per_house_" + tag,
 		_main.get_node("Loot").container_count() == CURATED_SPOTS \
-			+ (3 * n_houses - 1) + nb.building_loot.size(), _ok)
+			+ (3 * n_houses - 1) + nb.building_loot.size() + OFFICER_CORPSE, _ok)
 	# Every generated house and commercial building registered with HouseDoors.
 	_ok = _check("doors_registered_" + tag,
 		_main.get_node("HouseDoors")._ids.size() \

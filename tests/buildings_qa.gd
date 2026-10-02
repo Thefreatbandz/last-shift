@@ -51,7 +51,7 @@ func _builder_checks() -> void:
 	root.add_child(n3)
 	n3.build_world(777)
 	_ok = _check("interior_varies", n3.interior_hash() != n1.interior_hash(), _ok)
-	_ok = _check("buildings_5", n1.buildings.size() == 5, _ok) # 4 anchors + warehouse
+	_ok = _check("buildings_9", n1.buildings.size() == 9, _ok) # 5 anchors + 4 expansion lots
 	_ok = _check("loot_spots", n1.building_loot.size() >= 7, _ok)
 	_ok = _check("brute_spots_2", n1.brute_spawns.size() == 2, _ok)
 	_ok = _check("indoor_z_spots", n1.building_zombie_spawns.size() >= 4, _ok)
@@ -64,10 +64,10 @@ func _live_checks() -> void:
 	var doors = _main.get_node("HouseDoors")
 	var inv = _main.get_node("Inventory")
 	_ok = _check("run_started", _main._run_started, _ok)
-	_ok = _check("buildings_live_5", nb.buildings.size() == 5, _ok)
-	_ok = _check("bids_registered", doors._bids.size() == 5, _ok)
+	_ok = _check("buildings_live_9", nb.buildings.size() == 9, _ok)
+	_ok = _check("bids_registered", doors._bids.size() == 9, _ok)
 	_ok = _check("minimap_buildings",
-		_main.get_node("Minimap").buildings().size() == 5, _ok)
+		_main.get_node("Minimap").buildings().size() == 9, _ok)
 	var pj := _police_idx(nb)
 	_ok = _check("police_found", pj >= 0, _ok)
 	# --- Locked door: no key => stays locked.

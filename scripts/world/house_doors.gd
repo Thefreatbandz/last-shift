@@ -156,8 +156,9 @@ func _toggle_b(j: int) -> void:
 		tw.tween_callback(_revert_bboard_prompt.bind(j))
 		return
 	if bool(door.get("locked", false)) and not try_unlock_building(j):
-		# No key, no lockpick: thud + a temporary hint prompt.
-		_interact.set_prompt(int(_bids[j]), "LOCKED — NEED KEY")
+		# No key, no lockpick: thud + a temporary hint prompt. The police
+		# key hides in a house (or craft a lockpick) — say so outright.
+		_interact.set_prompt(int(_bids[j]), "LOCKED — KEY HIDES IN A HOUSE")
 		Sound.play("click")
 		var tw := create_tween()
 		tw.tween_interval(1.6)

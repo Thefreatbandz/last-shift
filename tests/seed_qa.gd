@@ -123,9 +123,10 @@ func _check_invariants(seed: int, ok: bool) -> bool:
 		nb.safehouse_door_pos.distance_to((sh["door"] as Dictionary)["pos"]) < 0.01, ok)
 	ok = _check("sh_door_flag_" + tag, bool((sh["door"] as Dictionary)["safehouse"]), ok)
 	ok = _check("boards_" + tag, nb.safehouse_boards.size() > 0, ok)
-	# Commercial buildings: 5 kinds (police, hospital, grocery, a 4th
-	# rotating kind, + the v2 warehouse); anchored kinds always present.
-	ok = _check("buildings_5_" + tag, nb.buildings.size() == 5, ok)
+	# Commercial buildings: 9 (5 anchors — police, hospital, grocery, a
+	# 4th rotating kind, + the v2 warehouse — plus 4 world-density
+	# expansion lots reusing corner/grocery); anchored kinds always present.
+	ok = _check("buildings_9_" + tag, nb.buildings.size() == 9, ok)
 	var kinds := {}
 	for b in nb.buildings:
 		kinds[String((b as Dictionary)["kind"])] = true

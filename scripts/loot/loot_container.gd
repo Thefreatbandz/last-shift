@@ -9,6 +9,10 @@ extends Node3D
 var loot: Array = [] # Array of [id: String, count: int]
 var searched := false
 var kind := "crate"
+## Field-report fix: guns in this container are never "picked clean" by
+## wave scarcity (the police armory pistol and the warehouse shotgun are
+## always there). Ammo still thins out with the waves.
+var scarcity_exempt_guns := false
 
 var _lid: Node3D
 var _glow: MeshInstance3D
@@ -16,6 +20,7 @@ var _glow: MeshInstance3D
 static var _m_wood: StandardMaterial3D
 static var _m_wood_dark: StandardMaterial3D
 static var _m_glow: StandardMaterial3D
+static var _m_glow_dim: StandardMaterial3D # dimmer ring for corpses
 static var _m_trash: StandardMaterial3D
 static var _m_trash_dark: StandardMaterial3D
 static var _m_body: StandardMaterial3D
@@ -28,6 +33,12 @@ static var _m_aid_white: StandardMaterial3D
 static var _m_aid_red: StandardMaterial3D
 static var _m_duffel: StandardMaterial3D
 static var _m_duffel_dark: StandardMaterial3D
+# Corpse clothing palette: torn, varied clothes per body (picked by
+# container_id, so every body looks different but stays deterministic).
+static var _m_cloth: Array = []
+# Police-uniform navy: the dead officer outside the station reads as a
+# cop at a glance (gun-findability, 2026-10-02).
+static var _m_navy: StandardMaterial3D
 
 
 static func _mats() -> void:
@@ -45,6 +56,14 @@ static func _mats() -> void:
 	_m_glow.emission = Color(1.0, 0.72, 0.35)
 	_m_glow.emission_energy_multiplier = 0.55
 	_m_glow.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	# Dimmer ring for corpses: the old bright ring swallowed the body
+	# silhouette (field-report quality pass).
+	_m_glow_dim = StandardMaterial3D.new()
+	_m_glow_dim.albedo_color = Color(1.0, 0.80, 0.45)
+	_m_glow_dim.emission_enabled = true
+	_m_glow_dim.emission = Color(1.0, 0.72, 0.35)
+	_m_glow_dim.emission_energy_multiplier = 0.12
+	_m_glow_dim.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	_m_trash = StandardMaterial3D.new()
 	_m_trash.albedo_color = Color(0.13, 0.14, 0.12)
 	_m_trash.roughness = 0.95
@@ -85,12 +104,27 @@ static func _mats() -> void:
 	_m_duffel_dark = StandardMaterial3D.new()
 	_m_duffel_dark.albedo_color = Color(0.12, 0.13, 0.09)
 	_m_duffel_dark.roughness = 1.0
+	# Corpse clothing: faded, torn-looking colors (shared, cheap).
+	# V3: darkened for contrast against the pale skin.
+	var cloth_cols := [Color(0.35, 0.155, 0.11), # dried-blood red
+		Color(0.17, 0.23, 0.33), # denim blue
+		Color(0.30, 0.28, 0.17), # dirty olive
+		Color(0.235, 0.19, 0.155)] # mud brown
+	for cc in cloth_cols:
+		var m := StandardMaterial3D.new()
+		m.albedo_color = cc
+		m.roughness = 1.0
+		_m_cloth.append(m)
+	_m_navy = StandardMaterial3D.new()
+	_m_navy.albedo_color = Color(0.10, 0.14, 0.30) # police-uniform dark navy
+	_m_navy.roughness = 1.0
 
 
 const PROMPTS := {
 	"crate": "SEARCH CRATE",
 	"trash": "SEARCH TRASH",
 	"corpse": "SEARCH CORPSE",
+	"officer_corpse": "SEARCH CORPSE",
 	"fresh_corpse": "SEARCH BODY",
 	"toolbox": "SEARCH TOOLBOX",
 	"firstaid": "SEARCH FIRST AID",
@@ -100,6 +134,13 @@ const PROMPTS := {
 }
 
 var container_id := -1 # build-order index; wave-scarcity rolls key off this
+var _officer := false # officer_corpse kind: navy police-uniform clothing
+
+
+## Corpse kinds share the dim glow ring and no-collision treatment.
+func _is_corpse() -> bool:
+	return kind == "corpse" or kind == "fresh_corpse" \
+		or kind == "officer_corpse"
 
 
 static func prompt_for(k: String) -> String:
@@ -114,6 +155,11 @@ func build(loot_items: Array, p_kind := "crate") -> void:
 		"trash":
 			_build_trash()
 		"corpse":
+			_build_corpse(false)
+		"officer_corpse":
+			# Dead officer outside the police station: navy uniform read,
+			# otherwise a plain old corpse (gun-findability, 2026-10-02).
+			_officer = true
 			_build_corpse(false)
 		"fresh_corpse":
 			_build_corpse(true)
@@ -192,15 +238,51 @@ func _build_trash() -> void:
 
 func _build_corpse(fresh: bool) -> void:
 	# A body lying on its back: torso, head, arms, legs. Old corpses are
-	# desiccated gray; fresh ones get a dark blood pool.
-	var cm := _m_body if not fresh else _m_body_dark
+	# desiccated gray; fresh ones get a dark blood pool. Clothing color,
+	# tears, and limb sprawl vary per container_id (deterministic, so the
+	# same seed always shows the same bodies).
+	# V3 readability: shoulder bar + rib stripes give the torso a human
+	# read, arms sprawl asymmetrically (one flung out, one bent by the
+	# head), one leg splays, the head tilts, and the clothing palette is
+	# darker for contrast against the pale skin.
+	var ci := absi(container_id)
+	var cm: Material = _m_navy if _officer \
+		else _m_cloth[ci % _m_cloth.size()] if not fresh \
+		else _m_cloth[(ci + 2) % _m_cloth.size()]
+	var legm: Material = _m_body_dark
 	var yaw := 0.0
+	# Limb sprawl varies a little per body.
+	var wob := 0.14 * float((ci % 3) - 1)
 	_box(Vector3(0.55, 0.28, 1.05), Vector3(0, 0.16, 0), cm, yaw) # torso
-	_ball(0.21, Vector3(0, 0.20, 0.78), _m_skin, 0.9) # head
-	_box(Vector3(0.16, 0.14, 0.62), Vector3(-0.38, 0.10, 0.05), cm, 0.12) # arm L
-	_box(Vector3(0.16, 0.14, 0.62), Vector3(0.38, 0.10, -0.02), cm, -0.10) # arm R
-	_box(Vector3(0.20, 0.16, 0.72), Vector3(-0.14, 0.10, -0.85), _m_body_dark, 0.05) # leg L
-	_box(Vector3(0.20, 0.16, 0.72), Vector3(0.14, 0.10, -0.88), _m_body_dark, -0.06) # leg R
+	# Shoulder bar: wider across the top of the torso.
+	_box(Vector3(0.78, 0.20, 0.26), Vector3(0, 0.20, 0.42), cm, yaw)
+	# Ribcage: three thin dark stripes across the chest.
+	for ri in 3:
+		_box(Vector3(0.46, 0.02, 0.055),
+			Vector3(0, 0.305, -0.14 + 0.12 * ri), _m_body_dark, yaw)
+	var head := _ball(0.21,
+		Vector3(0.02 * float((ci % 5) - 2), 0.20, 0.78), _m_skin, 0.9) # head
+	head.rotation.z = 0.25 if ci % 2 == 0 else -0.25
+	# Arms: one flung outward, one bent up beside the head.
+	_box(Vector3(0.16, 0.14, 0.62), Vector3(-0.46, 0.10, 0.10), cm,
+		0.55 + wob) # arm L
+	_box(Vector3(0.16, 0.14, 0.62), Vector3(0.42, 0.10, 0.34), cm,
+		-1.05 - wob) # arm R
+	_box(Vector3(0.20, 0.16, 0.72), Vector3(-0.14, 0.10, -0.85), legm,
+		0.05 + wob * 0.5) # leg L
+	_box(Vector3(0.20, 0.16, 0.72), Vector3(0.20, 0.10, -0.82), legm,
+		-0.38 - wob * 0.5) # leg R, splayed
+	# Torn cloth: two dark gash patches on the torso (raised above the ribs).
+	var tear := _m_body_dark
+	var tx := 0.13 if ci % 2 == 0 else -0.13
+	_box(Vector3(0.16, 0.025, 0.13), Vector3(tx, 0.335, 0.18 + 0.09 * (ci % 3)),
+		tear, wob)
+	_box(Vector3(0.12, 0.025, 0.10), Vector3(-tx, 0.335, -0.22 - 0.07 * (ci % 2)),
+		tear, -wob)
+	# A lost shoe nearby, for some bodies.
+	if ci % 4 == 0:
+		_box(Vector3(0.14, 0.12, 0.32),
+			Vector3(0.55 + 0.08 * (ci % 2), 0.06, -1.25), tear, 0.5 + 0.2 * (ci % 3))
 	if fresh:
 		# Dark blood pool spreading from the torso.
 		var pool := MeshInstance3D.new()
@@ -291,13 +373,16 @@ func _build_lumber() -> void:
 
 
 func _add_glow() -> void:
-	# Subtle glow ring while unsearched. Corpses get a wider ring so it
-	# encircles the blood pool instead of hiding under it.
+	# Subtle glow ring while unsearched. Corpses get a much smaller, faint
+	# ring (field report: the old ring read as a beacon, not a body) so
+	# the body and blood pool read first.
 	_glow = MeshInstance3D.new()
 	var gm := TorusMesh.new()
-	if kind == "corpse" or kind == "fresh_corpse":
-		gm.inner_radius = 1.18
-		gm.outer_radius = 1.34
+	var glow_mat: Material = _m_glow
+	if _is_corpse():
+		gm.inner_radius = 0.62
+		gm.outer_radius = 0.70
+		glow_mat = _m_glow_dim
 	else:
 		gm.inner_radius = 0.70
 		gm.outer_radius = 0.86
@@ -305,14 +390,14 @@ func _add_glow() -> void:
 	gm.ring_segments = 8
 	_glow.mesh = gm
 	_glow.position = Vector3(0, 0.04, 0)
-	_glow.material_override = _m_glow
+	_glow.material_override = glow_mat
 	add_child(_glow)
 
 
 func _add_collision() -> void:
 	# Solid so the player can't walk through it (corpses and ground drops
 	# are low: no block).
-	if kind == "corpse" or kind == "fresh_corpse" or kind == "drop":
+	if _is_corpse() or kind == "drop":
 		return
 	var sb := StaticBody3D.new()
 	var cs := CollisionShape3D.new()

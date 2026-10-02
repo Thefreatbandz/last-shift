@@ -78,6 +78,7 @@ var _prev_state: int = State.WANDER
 
 var _to := Vector3.ZERO
 var _dir := Vector3.ZERO
+var _cur_speed := 0.0 # speed ramp: smooth starts/stops, same top speeds
 var _last_launch := 1.0 # ragdoll launch factor of the killing blow
 var _ragdoll: ProcRagdoll = null # live ragdoll, if the active cap allowed one
 
@@ -132,6 +133,7 @@ func reset() -> void:
 	_pound_hit_t = -1.0
 	steer_override = Vector3.ZERO
 	has_steer_override = false
+	_cur_speed = 0.0
 	global_position = spawn_pos
 	velocity = Vector3.ZERO
 	rotation = Vector3.ZERO
@@ -148,6 +150,12 @@ func on_noise(pos: Vector3, radius: float) -> void:
 		_stimulus = pos
 		state = State.SUSPICIOUS
 		_look_t = 0.0
+		# Visible reaction first: the head snaps toward the noise before
+		# the body starts moving (reads as "it heard that").
+		if is_instance_valid(visual):
+			var tn := pos - global_position
+			var want := atan2(-tn.x, -tn.z)
+			visual.notice(signf(wrapf(want - visual.rotation.y, -PI, PI)))
 
 
 ## Wave loop: wave completion counts dead-but-present corpses as cleared.
@@ -358,9 +366,14 @@ func _steer(delta: float, target: Vector3, speed: float) -> void:
 			_dir = (_dir.normalized() + n.cross(Vector3.UP) * 0.6 * _wall_bias).normalized()
 	# Exponentially damped toward the desired velocity (frame-rate
 	# independent): turns and starts ramp instead of snapping.
+	# Speed ramp: the zombie accelerates into its stride and eases out of
+	# it instead of teleporting between speeds (less robotic stop-start).
+	# Converges to the same target speed — balance constants untouched.
+	var target_spd := speed if _dir != Vector3.ZERO else 0.0
+	_cur_speed = lerpf(_cur_speed, target_spd, 1.0 - exp(-4.0 * delta))
 	var k := 1.0 - exp(-8.0 * delta)
-	velocity.x = lerpf(velocity.x, _dir.x * speed, k)
-	velocity.z = lerpf(velocity.z, _dir.z * speed, k)
+	velocity.x = lerpf(velocity.x, _dir.x * _cur_speed, k)
+	velocity.z = lerpf(velocity.z, _dir.z * _cur_speed, k)
 	if _dir != Vector3.ZERO:
 		visual.set_target_yaw(atan2(-_dir.x, -_dir.z))
 
@@ -394,6 +407,10 @@ func _do_suspicious(delta: float) -> void:
 		state = State.CHASE
 		_last_known = player.global_position
 		_lose_t = 0.0
+		return
+	# Standing at a closed door while suspicious pounds it instead of
+	# staring at it — same rule as CHASE/ATTACK.
+	if _pound_door_first():
 		return
 	_to = _stimulus - global_position
 	_to.y = 0.0

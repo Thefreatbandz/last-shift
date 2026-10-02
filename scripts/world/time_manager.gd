@@ -5,7 +5,8 @@ extends Node
 ## Daylight is ~3 real minutes — loot, barricade and craft under pressure —
 ## then nightfall brings the wave. Drives the sun, the procedural sky, fog
 ## and ambient light, and tells the neighborhood (street lamps, lit
-## windows) and the player (flashlight) how dark it is.
+## windows), the interior zones (lanterns) and the player (flashlight) how
+## dark it is.
 
 signal clock_changed(day: int, hour: int, minute: int)
 
@@ -17,12 +18,12 @@ const DAY_TOP := Color(0.16, 0.42, 0.78) # deep teal-blue zenith
 const DAY_HOR := Color(0.84, 0.68, 0.52) # hazy warm apocalypse horizon
 const DUSK_TOP := Color(0.13, 0.11, 0.28)
 const DUSK_HOR := Color(1.00, 0.44, 0.18) # ember-orange dusk band
-const NIGHT_TOP := Color(0.006, 0.010, 0.036) # deeper blue night
-const NIGHT_HOR := Color(0.028, 0.046, 0.105)
+const NIGHT_TOP := Color(0.060, 0.082, 0.170) # night floor: moonlit blue,
+const NIGHT_HOR := Color(0.135, 0.175, 0.265) # silhouettes read (field report)
 const DAY_GND := Color(0.10, 0.12, 0.10)
-const NIGHT_GND := Color(0.005, 0.006, 0.010)
+const NIGHT_GND := Color(0.032, 0.036, 0.055)
 const FOG_DAY := Color(0.72, 0.66, 0.58) # warm haze, not blue
-const FOG_NIGHT := Color(0.020, 0.030, 0.062)
+const FOG_NIGHT := Color(0.095, 0.115, 0.185) # lifted: moonlit haze, readable
 
 var day := 1
 var time_hours := 9.0 # start mid-morning
@@ -201,7 +202,10 @@ func _apply() -> void:
 	else:
 		_sun.light_color = Color(0.42, 0.58, 1.0) # cool blue moonlight
 	# V2: stronger direct light against LOWER ambient = deep, punchy shadows.
-	_sun.light_energy = lerpf(0.24, 1.55, daylight) * (1.0 - 0.35 * _rain_f)
+	# Night: the moon is the key light — strong enough that streets,
+	# houses and zombie silhouettes read without the flashlight
+	# (Tbandz: "lighter night"), while the flashlight still owns detail.
+	_sun.light_energy = lerpf(0.55, 1.55, daylight) * (1.0 - 0.35 * _rain_f)
 
 	var top := NIGHT_TOP.lerp(DAY_TOP, daylight).lerp(DUSK_TOP, dusk * 0.65)
 	var hor := NIGHT_HOR.lerp(DAY_HOR, daylight).lerp(DUSK_HOR, dusk * 0.65)
@@ -209,18 +213,25 @@ func _apply() -> void:
 	_sky_mat.sky_horizon_color = hor
 	_sky_mat.ground_bottom_color = NIGHT_GND.lerp(DAY_GND, daylight)
 	_sky_mat.ground_horizon_color = hor * 0.55
-	_sky_mat.sky_energy_multiplier = lerpf(0.10, 1.0, daylight)
-	_sky_mat.ground_energy_multiplier = lerpf(0.06, 0.9, daylight)
+	_sky_mat.sky_energy_multiplier = lerpf(0.58, 1.0, daylight)
+	_sky_mat.ground_energy_multiplier = lerpf(0.16, 0.9, daylight)
 
 	_env.fog_light_color = FOG_NIGHT.lerp(FOG_DAY, daylight)
-	_env.fog_density = lerpf(0.016, 0.005, daylight) + 0.012 * _rain_f
-	_env.background_energy_multiplier = lerpf(0.18, 1.0, daylight) * (1.0 - 0.25 * _rain_f)
+	_env.fog_density = lerpf(0.012, 0.005, daylight) + 0.012 * _rain_f
+	_env.background_energy_multiplier = lerpf(0.62, 1.0, daylight) * (1.0 - 0.25 * _rain_f)
 	# V2: cool sky ambient runs LOWER than the warm sun — teal shadows vs
-	# orange highlights, the teal-orange apocalypse contrast.
-	_env.ambient_light_energy = lerpf(0.55, 0.72, daylight) * (1.0 - 0.20 * _rain_f)
+	# orange highlights, the teal-orange apocalypse contrast. Night floor
+	# lifted twice now (field report x2: "lighter night") — moonlit and
+	# readable, still night.
+	_env.ambient_light_energy = lerpf(1.30, 0.80, daylight) * (1.0 - 0.20 * _rain_f)
 
 	var night_factor := 1.0 - daylight
 	_hood.set_night_factor(night_factor)
+	# Interior zone lanterns brighten with the night (their own hook — the
+	# hood's set_night_factor only covers the exterior lamps/windows).
+	var iz: Node = _hood.interior_zones
+	if iz != null:
+		iz.set_night_factor(night_factor)
 	_visual.set_flashlight(daylight < 0.35)
 
 

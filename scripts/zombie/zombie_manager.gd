@@ -78,7 +78,7 @@ func _spawn_at(pos: Vector3) -> ZombieAI:
 	z.global_position = pos
 	z.barricades = barricades
 	z.setup(_player, _time_manager)
-	z.died.connect(_on_zombie_died.bind(z))
+	z.died.connect(_on_zombie_died)
 	zombies.append(z)
 	return z
 

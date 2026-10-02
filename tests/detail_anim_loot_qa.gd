@@ -188,6 +188,8 @@ func _commercial_pairing_checks() -> void:
 	_check("commercial_loot_present", entries.size() >= 10)
 	var grocery_food := 0
 	var grocery_total := 0
+	var corner_general := 0
+	var corner_total := 0
 	var hospital_meds := 0
 	var hospital_total := 0
 	for e in entries:
@@ -198,16 +200,26 @@ func _commercial_pairing_checks() -> void:
 		var names: Array = []
 		for it in items:
 			names.append(String((it as Array)[0]))
-		if bkind == "grocery" or bkind == "corner":
+		if bkind == "grocery":
 			grocery_total += 1
 			if names.has("canned_food") or names.has("water"):
 				grocery_food += 1
+		elif bkind == "corner":
+			# Corner stores are general stores: food/water/medicine up
+			# front, scrap/cloth in the back (building_types.gd).
+			corner_total += 1
+			if names.has("canned_food") or names.has("water") \
+					or names.has("medicine") or names.has("scrap") \
+					or names.has("cloth"):
+				corner_general += 1
 		elif bkind == "hospital":
 			hospital_total += 1
 			if names.has("medicine") or names.has("bandage") or names.has("medkit"):
 				hospital_meds += 1
 	_check("grocery_loot_is_food",
 		grocery_total >= 3 and grocery_food == grocery_total)
+	_check("corner_loot_is_general_goods",
+		corner_total >= 2 and corner_general == corner_total)
 	_check("hospital_loot_is_meds",
 		hospital_total >= 2 and hospital_meds >= 2)
 

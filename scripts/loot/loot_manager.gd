@@ -117,7 +117,7 @@ func _finish_search() -> void:
 	_interact.set_enabled(int(_ids[c]), false)
 	_visual.play_pickup()
 	_spawn_sparkle(c.global_position + Vector3(0, 0.9, 0))
-	var grant := _apply_scarcity(c.loot, c.container_id)
+	var grant := _apply_scarcity(c)
 	if grant.is_empty() and c.loot.size() > 0:
 		# Belt and suspenders: scarcity replaces items but never drops them,
 		# so this should be unreachable — but an empty search must never be
@@ -141,7 +141,15 @@ func _scarcity_wave() -> int:
 	return maxi(w, 1)
 
 
-func _apply_scarcity(items: Array, cid: int) -> Array:
+func _apply_scarcity(c: LootContainer) -> Array:
+	# Wave scarcity: at higher waves, ammo finds shrink and guns may be
+	# gone (replaced with scrap — "picked clean"). Deterministic: rolls
+	# key off (world_seed, container_id, wave), never the shared RNG
+	# streams. Containers flagged scarcity_exempt_guns always keep their
+	# guns (the guaranteed police pistol + warehouse shotgun); ammo still
+	# thins with the waves.
+	var items := c.loot
+	var cid := c.container_id
 	var w := _scarcity_wave()
 	if w <= 1:
 		return items
@@ -158,7 +166,7 @@ func _apply_scarcity(items: Array, cid: int) -> Array:
 			n = maxi(1, int(roundf(n * ammo_f)))
 			out.append([id, n])
 		elif id in SCARCE_GUNS:
-			if rng.randf() < gun_keep:
+			if c.scarcity_exempt_guns or rng.randf() < gun_keep:
 				out.append([id, n])
 			else:
 				out.append(["scrap", 2]) # someone got here first

@@ -206,9 +206,9 @@ func _ready() -> void:
 	_hint_label = Label.new()
 	_hint_label.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	_hint_label.offset_left = 18
-	_hint_label.offset_top = 72
+	_hint_label.offset_top = 216
 	_hint_label.offset_right = 560
-	_hint_label.offset_bottom = 172
+	_hint_label.offset_bottom = 316
 	_hint_label.text = "WASD / ARROWS — move\nSHIFT — sprint   SPACE / CLICK — attack\nQ / E — rotate camera   F — use/search   TAB — backpack"
 	_hint_label.add_theme_font_size_override("font_size", 15)
 	_hint_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.65))

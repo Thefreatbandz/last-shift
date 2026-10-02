@@ -86,13 +86,15 @@ func _builder_checks() -> void:
 				var a := _world_aabb(p as Node3D)
 				if not _inside_rect(a, rect, EPS):
 					_check("house_%d_%d_inside_%s" % [hi, seed, (p as Node).name], false)
-		# Commercial buildings: kinds are unique, roots are bld_<kind>.
-		# Zoned kinds are hollow SHELLS outside (no furniture); their real
-		# interiors live in the hidden zones (checked below).
+		# Commercial buildings: roots are bld_<kind>. Kinds can repeat
+		# (world-density expansion lots), so match the root by position,
+		# not by name. Zoned kinds are hollow SHELLS outside (no
+		# furniture); their real interiors live in the hidden zones
+		# (checked below).
 		for b in nb.buildings:
 			var bd := b as Dictionary
 			var kind := String(bd["kind"])
-			var broot := nb.get_node_or_null("bld_" + kind) as Node3D
+			var broot := _bld_root_for(nb, bd) as Node3D
 			if broot == null:
 				_check("bld_root_%s_%d" % [kind, seed], false)
 				continue
@@ -161,6 +163,18 @@ func _footprint(d: Dictionary) -> Rect2:
 	var w := float(d["w"])
 	var dd := float(d["d"])
 	return Rect2(p.x - w * 0.5, p.z - dd * 0.5, w, dd)
+
+
+## Find a commercial building's exterior root by position. Kinds can repeat
+## (world-density expansion lots): Godot auto-renames duplicate sibling
+## names ("bld_grocery" -> "@Node3D@1234"), so a name lookup cannot work
+## for duplicates — but every root sits exactly on its spec position.
+func _bld_root_for(nb: Node, bd: Dictionary) -> Node:
+	var bp := (bd as Dictionary)["pos"] as Vector3
+	for c in nb.get_children():
+		if c is Node3D and ((c as Node3D).position - bp).length() < 0.01:
+			return c
+	return null
 
 
 func _near_kind(p: Vector3, buildings: Array, kind: String, margin: float) -> bool:
